@@ -1,18 +1,23 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.0.1
+// @version      1.1.1
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
 // @run-at       document-start
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    // ============================================================
+    // STORAGE
+    // ============================================================
 
     const STORAGE_KEY = 'ttsCleanerConfig';
 
@@ -23,16 +28,9 @@
 
     let config = GM_getValue(STORAGE_KEY, DEFAULT_CONFIG);
 
-    // ------------------------------------------------------------
-    // STORAGE
-    // ------------------------------------------------------------
-
     function loadConfig() {
         if (!config || typeof config !== 'object') {
-            config = {
-                globalEnabled: false,
-                sites: {}
-            };
+            config = {};
         }
 
         if (typeof config.globalEnabled !== 'boolean') {
@@ -50,9 +48,10 @@
 
     loadConfig();
 
-    // ------------------------------------------------------------
+
+    // ============================================================
     // DOMAIN
-    // ------------------------------------------------------------
+    // ============================================================
 
     function getDomain() {
         return location.hostname
@@ -64,9 +63,69 @@
         return config.sites[getDomain()] || null;
     }
 
-    // ------------------------------------------------------------
-    // URL PATTERN
-    // ------------------------------------------------------------
+
+    // ============================================================
+    // MENU COMMANDS
+    // ============================================================
+
+    let toggleMenuId = null;
+    let settingsMenuId = null;
+
+    function registerMenuCommands() {
+        // Remove old toggle command if Tampermonkey supplied an ID.
+        if (
+            toggleMenuId !== null &&
+            typeof GM_unregisterMenuCommand === 'function'
+        ) {
+            try {
+                GM_unregisterMenuCommand(toggleMenuId);
+            } catch {
+                // Ignore unsupported/invalid IDs.
+            }
+        }
+
+        if (
+            settingsMenuId !== null &&
+            typeof GM_unregisterMenuCommand === 'function'
+        ) {
+            try {
+                GM_unregisterMenuCommand(settingsMenuId);
+            } catch {
+                // Ignore unsupported/invalid IDs.
+            }
+        }
+
+        toggleMenuId = GM_registerMenuCommand(
+            `TTS Cleaner: ${config.globalEnabled ? 'ON' : 'OFF'}`,
+            toggleCleaner
+        );
+
+        settingsMenuId = GM_registerMenuCommand(
+            'TTS Cleaner — Settings',
+            openSettings
+        );
+    }
+
+    function toggleCleaner() {
+        config.globalEnabled = !config.globalEnabled;
+        saveConfig();
+
+        registerMenuCommands();
+
+        if (config.globalEnabled) {
+            startCleaner();
+        } else {
+            stopCleaner();
+        }
+    }
+
+    // Register immediately.
+    registerMenuCommands();
+
+
+    // ============================================================
+    // URL PATTERNS
+    // ============================================================
 
     function wildcardToRegex(pattern) {
         const escaped = pattern
@@ -77,88 +136,67 @@
     }
 
     function matchesUrlPattern(pattern) {
-        if (!pattern) return false;
+        if (!pattern) {
+            return false;
+        }
+
+        pattern = pattern.trim();
+
+        if (!pattern) {
+            return false;
+        }
 
         try {
             const target = pattern.startsWith('/')
                 ? location.pathname + location.search + location.hash
                 : location.href;
 
-            return wildcardToRegex(pattern.trim()).test(target);
+            return wildcardToRegex(pattern).test(target);
         } catch {
             return false;
         }
     }
 
     function isChapterPage() {
+        if (!config.globalEnabled) {
+            return false;
+        }
+
         const site = getCurrentSite();
 
-        if (!site || !site.enabled) {
+        if (!site || site.enabled === false) {
             return false;
         }
 
-        if (!site.chapterContainer || !site.paragraphSelector) {
+        if (!site.chapterContainer) {
             return false;
         }
 
-        if (!Array.isArray(site.chapterUrlPatterns)) {
+        if (!site.paragraphSelector) {
+            return false;
+        }
+
+        if (
+            !Array.isArray(site.chapterUrlPatterns) ||
+            site.chapterUrlPatterns.length === 0
+        ) {
             return false;
         }
 
         return site.chapterUrlPatterns.some(matchesUrlPattern);
     }
 
-    // ------------------------------------------------------------
-    // MENU COMMANDS
-    // ------------------------------------------------------------
 
-    /*
-     * IMPORTANT:
-     * Register these immediately.
-     * Do NOT wait for DOMContentLoaded.
-     */
-
-    GM_registerMenuCommand(
-        () => `TTS Cleaner: ${config.globalEnabled ? 'ON' : 'OFF'}`,
-        () => {
-            config.globalEnabled = !config.globalEnabled;
-            saveConfig();
-
-            alert(
-                `TTS Cleaner is now ${config.globalEnabled ? 'ON' : 'OFF'}.`
-            );
-
-            if (config.globalEnabled) {
-                startCleaner();
-            } else {
-                stopCleaner();
-            }
-        }
-    );
-
-    GM_registerMenuCommand(
-        'TTS Cleaner — Settings',
-        () => {
-            openSettings();
-        }
-    );
-
-    // ------------------------------------------------------------
-    // CLEANER
-    // ------------------------------------------------------------
-
-    let observer = null;
-    let urlWatcher = null;
-
-    const processedContainers = new WeakSet();
-    const processingContainers = new WeakSet();
+    // ============================================================
+    // SELECTOR HELPERS
+    // ============================================================
 
     function safeQueryAll(root, selector) {
         try {
             return Array.from(root.querySelectorAll(selector));
         } catch (error) {
             console.warn(
-                '[TTS Cleaner] Invalid selector:',
+                '[pMerger] Invalid selector:',
                 selector,
                 error
             );
@@ -168,6 +206,13 @@
     }
 
     function elementMatches(element, selector) {
+        if (
+            !element ||
+            element.nodeType !== Node.ELEMENT_NODE
+        ) {
+            return false;
+        }
+
         try {
             return element.matches(selector);
         } catch {
@@ -179,6 +224,7 @@
         const results = [];
 
         if (
+            root &&
             root.nodeType === Node.ELEMENT_NODE &&
             elementMatches(root, selector)
         ) {
@@ -190,9 +236,25 @@
         return [...new Set(results)];
     }
 
-    // ------------------------------------------------------------
-    // DIALOGUE / SPECIAL BREAK DETECTION
-    // ------------------------------------------------------------
+    function closestChapter(element, selector) {
+        if (
+            !element ||
+            element.nodeType !== Node.ELEMENT_NODE
+        ) {
+            return null;
+        }
+
+        try {
+            return element.closest(selector);
+        } catch {
+            return null;
+        }
+    }
+
+
+    // ============================================================
+    // TEXT / BREAK DETECTION
+    // ============================================================
 
     function textOf(element) {
         return (element.textContent || '')
@@ -200,49 +262,38 @@
             .trim();
     }
 
-    function looksLikeDialogue(element) {
-        const text = textOf(element);
-
-        if (!text) return false;
-
-        // Straight and curly quotation marks.
-        if (
-            text.startsWith('"') ||
-            text.startsWith('“') ||
-            text.startsWith('‘') ||
-            text.startsWith("'") ||
-            text.startsWith('「') ||
-            text.startsWith('『')
-        ) {
-            return true;
-        }
-
-        // Common em-dash dialogue.
-        if (/^[—–-]\s*\S/.test(text)) {
-            return true;
-        }
-
-        return false;
-    }
-
     function looksLikeSceneBreak(element) {
         const text = textOf(element);
 
-        if (!text) return false;
+        if (!text) {
+            return false;
+        }
 
         return (
             /^\*{2,}$/.test(text) ||
             /^~{2,}$/.test(text) ||
             /^-{3,}$/.test(text) ||
-            /^_{3,}$/.test(text)
+            /^_{3,}$/.test(text) ||
+            /^•{2,}$/.test(text) ||
+            /^·{2,}$/.test(text)
         );
     }
 
-    function preserveBreak(first, second, site) {
-        if (!site.preserveDialogue) {
+    function looksLikeDialogue(element) {
+        const text = textOf(element);
+
+        if (!text) {
             return false;
         }
 
+        return (
+            /^["“‘「『]/.test(text) ||
+            /^[—–]\s*\S/.test(text)
+        );
+    }
+
+    function shouldPreserveBreak(first, second, site) {
+        // Scene breaks should always remain separate.
         if (
             looksLikeSceneBreak(first) ||
             looksLikeSceneBreak(second)
@@ -250,19 +301,29 @@
             return true;
         }
 
-        if (
-            looksLikeDialogue(first) ||
-            looksLikeDialogue(second)
-        ) {
+        if (site.preserveDialogue === false) {
+            return false;
+        }
+
+        /*
+         * Preserve a paragraph if the NEW paragraph appears to
+         * begin dialogue.
+         *
+         * This is intentionally less aggressive than the old
+         * version, which preserved the break whenever EITHER
+         * paragraph looked like dialogue.
+         */
+        if (looksLikeDialogue(second)) {
             return true;
         }
 
         return false;
     }
 
-    // ------------------------------------------------------------
+
+    // ============================================================
     // PARAGRAPH MERGING
-    // ------------------------------------------------------------
+    // ============================================================
 
     function areAdjacent(first, second) {
         let node = first.nextSibling;
@@ -286,7 +347,7 @@
         return false;
     }
 
-    function mergeParagraphs(first, second) {
+    function appendWithSpace(first, second) {
         const firstText = first.textContent || '';
         const secondText = second.textContent || '';
 
@@ -309,7 +370,14 @@
     }
 
     function cleanChapter(container, site) {
-        if (!container || processingContainers.has(container)) {
+        if (
+            !container ||
+            !container.isConnected
+        ) {
+            return;
+        }
+
+        if (processingContainers.has(container)) {
             return;
         }
 
@@ -322,7 +390,6 @@
             );
 
             if (paragraphs.length < 2) {
-                processedContainers.add(container);
                 return;
             }
 
@@ -331,48 +398,120 @@
             for (let i = 1; i < paragraphs.length; i++) {
                 const next = paragraphs[i];
 
-                if (!current.isConnected || !next.isConnected) {
+                if (
+                    !current.isConnected ||
+                    !next.isConnected
+                ) {
+                    if (next.isConnected) {
+                        current = next;
+                    }
+
                     continue;
                 }
 
+                /*
+                 * Never merge across another element.
+                 *
+                 * This is important because a chapter may contain
+                 * headings, scene breaks, ads, images, etc.
+                 */
                 if (!areAdjacent(current, next)) {
                     current = next;
                     continue;
                 }
 
-                if (preserveBreak(current, next, site)) {
+                if (
+                    shouldPreserveBreak(
+                        current,
+                        next,
+                        site
+                    )
+                ) {
                     current = next;
                     continue;
                 }
 
-                mergeParagraphs(current, next);
+                appendWithSpace(current, next);
             }
-
-            processedContainers.add(container);
 
         } finally {
             processingContainers.delete(container);
         }
     }
 
+
+    // ============================================================
+    // CONTAINER PROCESSING
+    // ============================================================
+
+    const processingContainers = new WeakSet();
+
+    /*
+     * Used only for debouncing changes inside existing chapters.
+     */
+    const pendingChapterTimers = new WeakMap();
+
     function processContainer(container) {
-        if (!config.globalEnabled) return;
-        if (!isChapterPage()) return;
+        if (!config.globalEnabled) {
+            return;
+        }
+
+        if (!isChapterPage()) {
+            return;
+        }
 
         const site = getCurrentSite();
 
-        if (!site) return;
+        if (!site) {
+            return;
+        }
 
         cleanChapter(container, site);
     }
 
+    function scheduleContainer(container, delay = 75) {
+        if (!container || !container.isConnected) {
+            return;
+        }
+
+        const oldTimer = pendingChapterTimers.get(container);
+
+        if (oldTimer) {
+            clearTimeout(oldTimer);
+        }
+
+        const timer = setTimeout(() => {
+            pendingChapterTimers.delete(container);
+
+            if (
+                config.globalEnabled &&
+                container.isConnected &&
+                isChapterPage()
+            ) {
+                processContainer(container);
+            }
+        }, delay);
+
+        pendingChapterTimers.set(
+            container,
+            timer
+        );
+    }
+
     function scanPage() {
-        if (!config.globalEnabled) return;
-        if (!isChapterPage()) return;
+        if (!config.globalEnabled) {
+            return;
+        }
+
+        if (!isChapterPage()) {
+            return;
+        }
 
         const site = getCurrentSite();
 
-        if (!site) return;
+        if (!site) {
+            return;
+        }
 
         const containers = findChapterContainers(
             document,
@@ -384,97 +523,166 @@
         }
     }
 
-    // ------------------------------------------------------------
+
+    // ============================================================
     // PAGETUAL / MUTATION OBSERVER
-    // ------------------------------------------------------------
+    // ============================================================
+
+    let observer = null;
 
     function handleAddedNode(node) {
         if (
             !node ||
-            node.nodeType !== Node.ELEMENT_NODE ||
-            !config.globalEnabled ||
-            !isChapterPage()
+            node.nodeType !== Node.ELEMENT_NODE
         ) {
+            return;
+        }
+
+        if (!config.globalEnabled) {
+            return;
+        }
+
+        if (!isChapterPage()) {
             return;
         }
 
         const site = getCurrentSite();
 
-        if (!site) return;
+        if (!site) {
+            return;
+        }
 
-        // A completely new chapter was added.
-        const containers = findChapterContainers(
+        /*
+         * Case 1:
+         * Pagetual appended an entirely new chapter container.
+         */
+        const newContainers = findChapterContainers(
             node,
             site.chapterContainer
         );
 
-        for (const container of containers) {
-            processContainer(container);
+        for (const container of newContainers) {
+            /*
+             * Wait briefly so Pagetual can finish inserting
+             * the chapter contents before we merge anything.
+             */
+            scheduleContainer(container, 75);
         }
 
-        // Content was added inside an existing chapter.
+        /*
+         * Case 2:
+         * New paragraphs/content were added inside an
+         * already-existing chapter.
+         */
         let parentChapter = null;
 
-        try {
-            if (elementMatches(node, site.chapterContainer)) {
-                parentChapter = node;
-            } else {
-                parentChapter = node.closest(
-                    site.chapterContainer
-                );
-            }
-        } catch {
-            parentChapter = null;
+        if (
+            elementMatches(
+                node,
+                site.chapterContainer
+            )
+        ) {
+            parentChapter = node;
+        } else {
+            parentChapter = closestChapter(
+                node,
+                site.chapterContainer
+            );
         }
 
         if (parentChapter) {
-            setTimeout(() => {
-                if (parentChapter.isConnected) {
-                    /*
-                     * Remove from WeakSet isn't possible, so this
-                     * intentionally reprocesses only when new content
-                     * has been inserted into the chapter.
-                     */
-                    cleanChapter(parentChapter, site);
-                }
-            }, 100);
+            scheduleContainer(
+                parentChapter,
+                100
+            );
         }
     }
 
     function startObserver() {
-        if (observer) return;
+        if (observer) {
+            return;
+        }
 
-        observer = new MutationObserver(mutations => {
-            if (!config.globalEnabled) return;
+        if (!document.documentElement) {
+            return;
+        }
 
-            for (const mutation of mutations) {
-                for (const node of mutation.addedNodes) {
-                    handleAddedNode(node);
+        observer = new MutationObserver(
+            mutations => {
+                if (!config.globalEnabled) {
+                    return;
+                }
+
+                if (!isChapterPage()) {
+                    return;
+                }
+
+                const site = getCurrentSite();
+
+                if (!site) {
+                    return;
+                }
+
+                for (const mutation of mutations) {
+
+                    /*
+                     * If the mutation target is itself a paragraph,
+                     * it is probably the cleaner moving text/nodes
+                     * inside an existing paragraph.
+                     *
+                     * Ignore it to prevent observer feedback loops.
+                     */
+                    if (
+                        mutation.target &&
+                        mutation.target.nodeType ===
+                            Node.ELEMENT_NODE &&
+                        elementMatches(
+                            mutation.target,
+                            site.paragraphSelector
+                        )
+                    ) {
+                        continue;
+                    }
+
+                    for (
+                        const node of mutation.addedNodes
+                    ) {
+                        handleAddedNode(node);
+                    }
                 }
             }
-        });
+        );
 
-        observer.observe(document.documentElement, {
-            childList: true,
-            subtree: true
-        });
+        observer.observe(
+            document.documentElement,
+            {
+                childList: true,
+                subtree: true
+            }
+        );
     }
 
     function stopObserver() {
-        if (!observer) return;
+        if (!observer) {
+            return;
+        }
 
         observer.disconnect();
         observer = null;
     }
 
-    // ------------------------------------------------------------
-    // SPA URL WATCHER
-    // ------------------------------------------------------------
 
+    // ============================================================
+    // SPA URL WATCHER
+    // ============================================================
+
+    let urlWatcher = null;
     let lastUrl = location.href;
 
     function startUrlWatcher() {
-        if (urlWatcher) return;
+        if (urlWatcher) {
+            return;
+        }
 
         urlWatcher = setInterval(() => {
             if (location.href === lastUrl) {
@@ -483,40 +691,63 @@
 
             lastUrl = location.href;
 
-            if (config.globalEnabled) {
-                setTimeout(scanPage, 100);
+            if (!config.globalEnabled) {
+                return;
             }
-        }, 1000);
+
+            /*
+             * Give the SPA a moment to replace the chapter.
+             */
+            setTimeout(() => {
+                scanPage();
+            }, 150);
+
+        }, 750);
     }
 
     function stopUrlWatcher() {
-        if (!urlWatcher) return;
+        if (!urlWatcher) {
+            return;
+        }
 
         clearInterval(urlWatcher);
         urlWatcher = null;
     }
 
-    // ------------------------------------------------------------
+
+    // ============================================================
     // START / STOP
-    // ------------------------------------------------------------
+    // ============================================================
 
     function startCleaner() {
-        if (!config.globalEnabled) return;
+        if (!config.globalEnabled) {
+            return;
+        }
 
         startObserver();
         startUrlWatcher();
 
-        setTimeout(scanPage, 100);
+        setTimeout(() => {
+            scanPage();
+        }, 100);
     }
 
     function stopCleaner() {
         stopObserver();
         stopUrlWatcher();
+
+        /*
+         * Cancel pending chapter timers.
+         *
+         * WeakMap itself cannot be iterated, so timers will simply
+         * check config.globalEnabled before doing anything.
+         */
     }
 
-    // ------------------------------------------------------------
+
+    // ============================================================
     // SETTINGS UI
-    // ------------------------------------------------------------
+    // ============================================================
 
     let settingsWindow = null;
 
@@ -530,11 +761,20 @@
     }
 
     function injectStyles() {
-        if (document.getElementById('tts-cleaner-styles')) {
+        if (
+            document.getElementById(
+                'tts-cleaner-styles'
+            )
+        ) {
             return;
         }
 
-        const style = document.createElement('style');
+        if (!document.documentElement) {
+            return;
+        }
+
+        const style =
+            document.createElement('style');
 
         style.id = 'tts-cleaner-styles';
 
@@ -586,6 +826,7 @@
                 background: none;
                 font-size: 28px;
                 cursor: pointer;
+                line-height: 1;
             }
 
             .tts-cleaner-body {
@@ -673,6 +914,11 @@
         document.documentElement.appendChild(style);
     }
 
+
+    // ============================================================
+    // OPEN SETTINGS
+    // ============================================================
+
     function openSettings() {
         if (!document.documentElement) {
             return;
@@ -682,14 +928,17 @@
 
         if (settingsWindow) {
             settingsWindow.remove();
+            settingsWindow = null;
         }
 
         const domain = getDomain();
         const site = getCurrentSite();
 
-        settingsWindow = document.createElement('div');
+        settingsWindow =
+            document.createElement('div');
 
-        settingsWindow.className = 'tts-cleaner-overlay';
+        settingsWindow.className =
+            'tts-cleaner-overlay';
 
         settingsWindow.innerHTML = `
             <div class="tts-cleaner-window">
@@ -716,24 +965,27 @@
 
                     ${
                         site
-                        ? `
-                            <div class="tts-message">
-                                This site has saved settings.
-                            </div>
-                        `
-                        : `
-                            <div class="tts-message">
-                                No settings have been configured
-                                for this site yet.
-                            </div>
-                        `
+                            ? `
+                                <div class="tts-message">
+                                    This site has saved settings.
+                                </div>
+                            `
+                            : `
+                                <div class="tts-message">
+                                    No settings for this site yet.
+                                </div>
+                            `
                     }
 
                     <label class="tts-check">
                         <input
                             id="tts-site-enabled"
                             type="checkbox"
-                            ${site?.enabled !== false ? 'checked' : ''}
+                            ${
+                                site?.enabled !== false
+                                    ? 'checked'
+                                    : ''
+                            }
                         >
                         Enable cleaner for this site
                     </label>
@@ -746,7 +998,8 @@
                             rows="3"
                             placeholder="/chapter/*"
                         >${escapeHtml(
-                            site?.chapterUrlPatterns?.join('\n') || ''
+                            site?.chapterUrlPatterns
+                                ?.join('\n') || ''
                         )}</textarea>
 
                         <div class="tts-help">
@@ -784,9 +1037,11 @@
                         <input
                             id="tts-preserve-dialogue"
                             type="checkbox"
-                            ${site?.preserveDialogue !== false
-                                ? 'checked'
-                                : ''}
+                            ${
+                                site?.preserveDialogue !== false
+                                    ? 'checked'
+                                    : ''
+                            }
                         >
                         Preserve dialogue paragraph breaks
                     </label>
@@ -812,12 +1067,13 @@
 
                         ${
                             site
-                            ? `
-                                <button data-action="delete">
-                                    Delete
-                                </button>
-                            `
-                            : ''
+                                ? `
+                                    <button
+                                        data-action="delete">
+                                        Delete
+                                    </button>
+                                `
+                                : ''
                         }
 
                         <button data-action="close">
@@ -830,37 +1086,66 @@
             </div>
         `;
 
-        document.documentElement.appendChild(settingsWindow);
+        document.documentElement.appendChild(
+            settingsWindow
+        );
 
-        settingsWindow.addEventListener('click', event => {
-            const actionElement =
-                event.target.closest('[data-action]');
+        settingsWindow.addEventListener(
+            'click',
+            event => {
+                const actionElement =
+                    event.target.closest(
+                        '[data-action]'
+                    );
 
-            if (!actionElement) return;
+                if (!actionElement) {
+                    return;
+                }
 
-            const action = actionElement.dataset.action;
+                const action =
+                    actionElement.dataset.action;
 
-            if (action === 'close') {
-                closeSettings();
+                if (action === 'close') {
+                    closeSettings();
+                }
+
+                if (action === 'test') {
+                    testSettings();
+                }
+
+                if (action === 'save') {
+                    saveSettings();
+                }
+
+                if (action === 'delete') {
+                    deleteSettings();
+                }
             }
+        );
 
-            if (action === 'test') {
-                testSettings();
+        settingsWindow.addEventListener(
+            'click',
+            event => {
+                if (
+                    event.target === settingsWindow
+                ) {
+                    closeSettings();
+                }
             }
-
-            if (action === 'save') {
-                saveSettings();
-            }
-
-            if (action === 'delete') {
-                deleteSettings();
-            }
-        });
+        );
     }
+
+
+    // ============================================================
+    // SETTINGS FORM
+    // ============================================================
 
     function getFormSettings() {
         const patterns =
-            document.getElementById('tts-url-patterns')
+            document
+                .getElementById(
+                    'tts-url-patterns'
+                )
                 ?.value
                 .split('\n')
                 .map(x => x.trim())
@@ -868,41 +1153,73 @@
 
         return {
             enabled:
-                document.getElementById('tts-site-enabled')
+                document
+                    .getElementById(
+                        'tts-site-enabled'
+                    )
                     ?.checked ?? true,
 
-            chapterUrlPatterns: patterns,
+            chapterUrlPatterns:
+                patterns,
 
             chapterContainer:
-                document.getElementById('tts-chapter-selector')
+                document
+                    .getElementById(
+                        'tts-chapter-selector'
+                    )
                     ?.value
                     .trim() || '',
 
             paragraphSelector:
-                document.getElementById('tts-paragraph-selector')
+                document
+                    .getElementById(
+                        'tts-paragraph-selector'
+                    )
                     ?.value
                     .trim() || '',
 
             preserveDialogue:
-                document.getElementById('tts-preserve-dialogue')
+                document
+                    .getElementById(
+                        'tts-preserve-dialogue'
+                    )
                     ?.checked ?? true
         };
     }
 
-    function showResult(message, error = false) {
+    function showResult(
+        message,
+        error = false
+    ) {
         const result =
-            document.getElementById('tts-result');
+            document.getElementById(
+                'tts-result'
+            );
 
-        if (!result) return;
+        if (!result) {
+            return;
+        }
 
         result.textContent = message;
-        result.classList.toggle('tts-error', error);
+
+        result.classList.toggle(
+            'tts-error',
+            error
+        );
     }
 
-    function testSettings() {
-        const values = getFormSettings();
 
-        if (!values.chapterContainer) {
+    // ============================================================
+    // TEST SETTINGS
+    // ============================================================
+
+    function testSettings() {
+        const values =
+            getFormSettings();
+
+        if (
+            !values.chapterContainer
+        ) {
             showResult(
                 'Enter a chapter container selector.',
                 true
@@ -910,7 +1227,9 @@
             return;
         }
 
-        if (!values.paragraphSelector) {
+        if (
+            !values.paragraphSelector
+        ) {
             showResult(
                 'Enter a paragraph selector.',
                 true
@@ -921,9 +1240,10 @@
         let containers;
 
         try {
-            containers = document.querySelectorAll(
-                values.chapterContainer
-            );
+            containers =
+                document.querySelectorAll(
+                    values.chapterContainer
+                );
         } catch {
             showResult(
                 'Invalid chapter container selector.',
@@ -935,10 +1255,13 @@
         let paragraphCount = 0;
 
         try {
-            for (const container of containers) {
-                paragraphCount += container.querySelectorAll(
-                    values.paragraphSelector
-                ).length;
+            for (
+                const container of containers
+            ) {
+                paragraphCount +=
+                    container.querySelectorAll(
+                        values.paragraphSelector
+                    ).length;
             }
         } catch {
             showResult(
@@ -949,16 +1272,27 @@
         }
 
         showResult(
-            `Found ${containers.length} chapter container(s) ` +
-            `and ${paragraphCount} paragraph(s).`
+            `Found ${containers.length} chapter ` +
+            `container(s) and ${paragraphCount} ` +
+            `paragraph(s).`
         );
     }
 
-    function saveSettings() {
-        const values = getFormSettings();
-        const domain = getDomain();
 
-        if (!values.chapterUrlPatterns.length) {
+    // ============================================================
+    // SAVE SETTINGS
+    // ============================================================
+
+    function saveSettings() {
+        const values =
+            getFormSettings();
+
+        const domain =
+            getDomain();
+
+        if (
+            !values.chapterUrlPatterns.length
+        ) {
             showResult(
                 'Enter at least one chapter URL pattern.',
                 true
@@ -966,7 +1300,9 @@
             return;
         }
 
-        if (!values.chapterContainer) {
+        if (
+            !values.chapterContainer
+        ) {
             showResult(
                 'Enter a chapter container selector.',
                 true
@@ -974,7 +1310,9 @@
             return;
         }
 
-        if (!values.paragraphSelector) {
+        if (
+            !values.paragraphSelector
+        ) {
             showResult(
                 'Enter a paragraph selector.',
                 true
@@ -982,6 +1320,7 @@
             return;
         }
 
+        // Validate both selectors.
         try {
             document.querySelectorAll(
                 values.chapterContainer
@@ -998,27 +1337,42 @@
             return;
         }
 
-        config.sites[domain] = values;
+        config.sites[domain] =
+            values;
+
         saveConfig();
 
-        showResult('Settings saved.');
+        showResult(
+            'Settings saved.'
+        );
 
         if (config.globalEnabled) {
-            setTimeout(scanPage, 100);
+            setTimeout(
+                scanPage,
+                100
+            );
         }
     }
 
+
+    // ============================================================
+    // DELETE SETTINGS
+    // ============================================================
+
     function deleteSettings() {
-        const domain = getDomain();
+        const domain =
+            getDomain();
 
         if (!config.sites[domain]) {
             closeSettings();
             return;
         }
 
-        if (!confirm(
-            `Delete TTS Cleaner settings for ${domain}?`
-        )) {
+        if (
+            !confirm(
+                `Delete TTS Cleaner settings for ${domain}?`
+            )
+        ) {
             return;
         }
 
@@ -1028,35 +1382,47 @@
 
         closeSettings();
 
-        stopCleaner();
+        /*
+         * Stop the observer if the current page no longer
+         * has a configured site.
+         */
+        if (
+            config.globalEnabled
+        ) {
+            if (!getCurrentSite()) {
+                stopCleaner();
+            }
+        }
     }
 
+
+    // ============================================================
+    // CLOSE SETTINGS
+    // ============================================================
+
     function closeSettings() {
-        if (!settingsWindow) return;
+        if (!settingsWindow) {
+            return;
+        }
 
         settingsWindow.remove();
         settingsWindow = null;
     }
 
-    // ------------------------------------------------------------
-    // INITIALIZATION
-    // ------------------------------------------------------------
 
-    /*
-     * Menu commands have already been registered above.
-     *
-     * The actual cleaner waits until the DOM exists.
-     */
+    // ============================================================
+    // INITIALIZATION
+    // ============================================================
 
     function initialize() {
-        injectStyles();
-
         if (config.globalEnabled) {
             startCleaner();
         }
     }
 
-    if (document.readyState === 'loading') {
+    if (
+        document.readyState === 'loading'
+    ) {
         document.addEventListener(
             'DOMContentLoaded',
             initialize,
