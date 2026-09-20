@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.7
+// @version      1.1.8
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -22,7 +22,8 @@
     // ============================================================
 
     const STORAGE_KEY = 'ttsCleanerConfig';
-
+	const originalChapterHTML = new WeakMap();
+	const modifiedContainers = new Set();
     const DEFAULT_CONFIG = {
         globalEnabled: false,
         sites: {}
@@ -96,7 +97,15 @@
                 // Ignore unsupported/invalid IDs.
             }
         }
+GM_registerMenuCommand(
+    'pMerger: Apply',
+    applyCurrentPage
+);
 
+GM_registerMenuCommand(
+    'pMerger: Undo',
+    undoCurrentPage
+);
         toggleMenuId = GM_registerMenuCommand(
             `TTS Cleaner: ${config.globalEnabled ? 'ON' : 'OFF'}`,
             toggleCleaner
@@ -388,7 +397,56 @@ function shouldPreserveBreak(first, second, site) {
 
         second.remove();
     }
+function saveOriginalChapter(container) {
+    if (!originalChapterHTML.has(container)) {
+        originalChapterHTML.set(
+            container,
+            container.innerHTML
+        );
 
+        modifiedContainers.add(container);
+    }
+}
+
+function applyCurrentPage() {
+    if (!isChapterPage()) {
+        return;
+    }
+
+    const site = getCurrentSite();
+
+    if (!site) {
+        return;
+    }
+
+    const containers = findChapterContainers(
+        document,
+        site.chapterContainer
+    );
+
+    for (const container of containers) {
+        saveOriginalChapter(container);
+        cleanChapter(container, site);
+    }
+}
+
+function undoCurrentPage() {
+    for (const container of modifiedContainers) {
+        const original =
+            originalChapterHTML.get(container);
+
+        if (
+            original !== undefined &&
+            container.isConnected
+        ) {
+            container.innerHTML = original;
+        }
+
+        originalChapterHTML.delete(container);
+    }
+
+    modifiedContainers.clear();
+}
 function cleanChapter(container, site) {
     if (
         !container ||
@@ -398,10 +456,12 @@ function cleanChapter(container, site) {
     }
 
     if (processingContainers.has(container)) {
-        return;
-    }
+    return;
+}
 
-    processingContainers.add(container);
+saveOriginalChapter(container);
+
+processingContainers.add(container);
 
     try {
         // --------------------------------------------------------
