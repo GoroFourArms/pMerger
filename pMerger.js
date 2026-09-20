@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.6
+// @version      1.1.7
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
