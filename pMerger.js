@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.4
+// @version      1.1.5
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -9,6 +9,8 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_unregisterMenuCommand
+// @downloadURL  https://raw.githubusercontent.com/GoroFourArms/pMerger/refs/heads/main/pMerger.js
+// @updateURL    https://raw.githubusercontent.com/GoroFourArms/pMerger/refs/heads/main/pMerger.js
 // @run-at       document-start
 // ==/UserScript==
 
