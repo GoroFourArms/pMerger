@@ -272,39 +272,6 @@ function looksLikeSceneBreak(text) {
         /^·{2,}$/.test(text)
     );
 }
-function convertSceneBreak(element) {
-    if (!element) return false;
-
-    const text = textOf(element);
-
-    if (!looksLikeSceneBreak(text)) return false;
-
-    const hr = document.createElement('hr');
-    element.replaceWith(hr);
-
-    return true;
-}
-function getNavigationReplacement(element) {
-    if (!element) {
-        return null;
-    }
-
-    const text = textOf(element);
-
-    if (/^(?:next|next\s+chapter)$/i.test(text)) {
-        return '~~>';
-    }
-
-    if (/^(?:previous|previous\s+chapter)$/i.test(text)) {
-        return '<~~';
-    }
-
-    if (/^(?:toc|contents|table\s+of\s+contents)$/i.test(text)) {
-        return '~~|~~';
-    }
-
-    return null;
-}
     function cleanNavigationElement(element) {
     const replacement =
         getNavigationReplacement(element);
