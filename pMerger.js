@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.5
+// @version      1.1.6
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -812,160 +812,176 @@ function cleanChapter(container, site) {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
     }
-
-    function injectStyles() {
-        if (
-            document.getElementById(
-                'tts-cleaner-styles'
-            )
-        ) {
-            return;
-        }
-
-        if (!document.documentElement) {
-            return;
-        }
-
-        const style =
-            document.createElement('style');
-
-        style.id = 'tts-cleaner-styles';
-
-        style.textContent = `
-            .tts-cleaner-overlay {
-                position: fixed;
-                inset: 0;
-                z-index: 2147483647;
-                background: rgba(0,0,0,.55);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-                box-sizing: border-box;
-                font-family: system-ui, sans-serif;
-            }
-
-            .tts-cleaner-window {
-                width: min(620px, 100%);
-                max-height: 90vh;
-                overflow-y: auto;
-                background: white;
-                color: #222;
-                border-radius: 10px;
-                box-shadow: 0 20px 60px rgba(0,0,0,.4);
-            }
-
-            .tts-cleaner-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                padding: 16px 18px;
-                border-bottom: 1px solid #ddd;
-            }
-
-            .tts-cleaner-title {
-                font-size: 19px;
-                font-weight: 700;
-            }
-
-            .tts-cleaner-domain {
-                color: #777;
-                font-size: 13px;
-                margin-top: 3px;
-            }
-
-            .tts-cleaner-close {
-                border: 0;
-                background: none;
-                font-size: 28px;
-                cursor: pointer;
-                line-height: 1;
-            }
-
-            .tts-cleaner-body {
-                padding: 18px;
-            }
-
-            .tts-cleaner-body label {
-                display: block;
-                margin-top: 16px;
-                font-weight: 600;
-            }
-
-            .tts-cleaner-body input,
-            .tts-cleaner-body textarea {
-                box-sizing: border-box;
-                width: 100%;
-                margin-top: 6px;
-                padding: 9px;
-                border: 1px solid #bbb;
-                border-radius: 6px;
-                font: inherit;
-            }
-
-            .tts-cleaner-body textarea {
-                resize: vertical;
-            }
-
-            .tts-check {
-                display: flex !important;
-                align-items: center;
-                gap: 8px;
-            }
-
-            .tts-check input {
-                width: auto;
-                margin: 0;
-            }
-
-            .tts-help {
-                margin-top: 6px;
-                color: #777;
-                font-size: 12px;
-                font-weight: normal;
-            }
-
-            .tts-message {
-                padding: 10px;
-                background: #f3f3f3;
-                border-radius: 6px;
-                margin-bottom: 12px;
-            }
-
-            .tts-buttons {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-                margin-top: 20px;
-            }
-
-            .tts-buttons button {
-                padding: 8px 13px;
-                border: 1px solid #aaa;
-                border-radius: 6px;
-                cursor: pointer;
-                background: #f4f4f4;
-            }
-
-            .tts-buttons .primary {
-                background: #222;
-                color: white;
-                border-color: #222;
-            }
-
-            .tts-result {
-                margin-top: 12px;
-                color: #176b2c;
-                min-height: 18px;
-            }
-
-            .tts-error {
-                color: #a00;
-            }
-        `;
-
-        document.documentElement.appendChild(style);
+	
+function injectStyles() {
+    if (
+        document.getElementById(
+            'tts-cleaner-styles'
+        )
+    ) {
+        return;
     }
+
+    if (!document.documentElement) {
+        return;
+    }
+
+    const style =
+        document.createElement('style');
+
+    style.id = 'tts-cleaner-styles';
+
+    style.textContent = `
+        .tts-cleaner-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 2147483647;
+            background: rgba(0,0,0,.75);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
+            font-family: system-ui, sans-serif;
+        }
+
+        .tts-cleaner-window {
+            width: min(620px, 100%);
+            max-height: 90vh;
+            overflow-y: auto;
+            background: #1e1e1e !important;
+            color: #eeeeee !important;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0,0,0,.7);
+        }
+
+        .tts-cleaner-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 18px;
+            border-bottom: 1px solid #444;
+        }
+
+        .tts-cleaner-title {
+            font-size: 19px;
+            font-weight: 700;
+            color: #ffffff !important;
+        }
+
+        .tts-cleaner-domain {
+            color: #aaaaaa !important;
+            font-size: 13px;
+            margin-top: 3px;
+        }
+
+        .tts-cleaner-close {
+            border: 0;
+            background: none !important;
+            color: #ffffff !important;
+            font-size: 28px;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        .tts-cleaner-body {
+            padding: 18px;
+        }
+
+        .tts-cleaner-body label {
+            display: block;
+            margin-top: 16px;
+            font-weight: 600;
+            color: #eeeeee !important;
+        }
+
+        .tts-cleaner-body input,
+        .tts-cleaner-body textarea {
+            box-sizing: border-box;
+            width: 100%;
+            margin-top: 6px;
+            padding: 9px;
+            background: #2b2b2b !important;
+            color: #ffffff !important;
+            border: 1px solid #555 !important;
+            border-radius: 6px;
+            font: inherit;
+        }
+
+        .tts-cleaner-body input::placeholder,
+        .tts-cleaner-body textarea::placeholder {
+            color: #888 !important;
+        }
+
+        .tts-check {
+            display: flex !important;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tts-check input {
+            width: auto;
+            margin: 0;
+        }
+
+        .tts-help {
+            margin-top: 6px;
+            color: #999 !important;
+            font-size: 12px;
+            font-weight: normal;
+        }
+
+        .tts-message {
+            padding: 10px;
+            background: #292929 !important;
+            color: #dddddd !important;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+
+        .tts-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 20px;
+        }
+
+        .tts-buttons button {
+            padding: 8px 13px;
+            border: 1px solid #555 !important;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #333333 !important;
+            color: #ffffff !important;
+        }
+
+        .tts-buttons button:hover {
+            background: #444444 !important;
+        }
+
+        .tts-buttons .primary {
+            background: #555555 !important;
+            color: #ffffff !important;
+            border-color: #777 !important;
+        }
+
+        .tts-buttons .primary:hover {
+            background: #666666 !important;
+        }
+
+        .tts-result {
+            margin-top: 12px;
+            color: #7ee787 !important;
+            min-height: 18px;
+        }
+
+        .tts-error {
+            color: #ff7b72 !important;
+        }
+    `;
+
+    document.documentElement.appendChild(style);
+}
 
 
     // ============================================================
