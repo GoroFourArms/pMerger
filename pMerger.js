@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.1
+// @version      1.1.2
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -337,33 +337,23 @@ function getNavigationReplacement(element) {
         );
     }
 
-    function shouldPreserveBreak(first, second, site) {
-        // Scene breaks should always remain separate.
-        if (
-            looksLikeSceneBreak(first) ||
-            looksLikeSceneBreak(second)
-        ) {
-            return true;
-        }
-
-        if (site.preserveDialogue === false) {
-            return false;
-        }
-
-        /*
-         * Preserve a paragraph if the NEW paragraph appears to
-         * begin dialogue.
-         *
-         * This is intentionally less aggressive than the old
-         * version, which preserved the break whenever EITHER
-         * paragraph looked like dialogue.
-         */
-        if (looksLikeDialogue(second)) {
-            return true;
-        }
-
+function shouldPreserveBreak(first, second, site) {
+    if (
+        site.preserveDialogue === false
+    ) {
         return false;
     }
+
+    /*
+     * Preserve a paragraph if the NEW paragraph
+     * appears to begin dialogue.
+     */
+    if (looksLikeDialogue(second)) {
+        return true;
+    }
+
+    return false;
+}
 
 
     // ============================================================
@@ -414,86 +404,132 @@ function getNavigationReplacement(element) {
         second.remove();
     }
 
-    function cleanChapter(container, site) {
-        if (
-            !container ||
-            !container.isConnected
-        ) {
-            return;
-        }
-
-        if (processingContainers.has(container)) {
-            return;
-        }
-
-        processingContainers.add(container);
-
-try {
-    const possibleNavigation =
-        safeQueryAll(
-            container,
-            'a, button, nav, [role="button"]'
-        );
-
-    for (const element of possibleNavigation) {
-        cleanNavigationElement(element);
-    }
-
-    const paragraphs = safeQueryAll(
-        container,
-        site.paragraphSelector
-    );
-
-    if (paragraphs.length < 2) {
+function cleanChapter(container, site) {
+    if (
+        !container ||
+        !container.isConnected
+    ) {
         return;
     }
 
-            let current = paragraphs[0];
-
-            for (let i = 1; i < paragraphs.length; i++) {
-                const next = paragraphs[i];
-
-                if (
-                    !current.isConnected ||
-                    !next.isConnected
-                ) {
-                    if (next.isConnected) {
-                        current = next;
-                    }
-
-                    continue;
-                }
-
-                /*
-                 * Never merge across another element.
-                 *
-                 * This is important because a chapter may contain
-                 * headings, scene breaks, ads, images, etc.
-                 */
-                if (!areAdjacent(current, next)) {
-                    current = next;
-                    continue;
-                }
-
-                if (
-                    shouldPreserveBreak(
-                        current,
-                        next,
-                        site
-                    )
-                ) {
-                    current = next;
-                    continue;
-                }
-
-                appendWithSpace(current, next);
-            }
-
-        } finally {
-            processingContainers.delete(container);
-        }
+    if (processingContainers.has(container)) {
+        return;
     }
 
+    processingContainers.add(container);
+
+    try {
+        // --------------------------------------------------------
+        // Navigation text
+        // --------------------------------------------------------
+
+        const possibleNavigation =
+            safeQueryAll(
+                container,
+                'a, button, [role="button"]'
+            );
+
+        for (const element of possibleNavigation) {
+            cleanNavigationElement(element);
+        }
+
+
+        // --------------------------------------------------------
+        // Find paragraphs
+        // --------------------------------------------------------
+
+        let paragraphs = safeQueryAll(
+            container,
+            site.paragraphSelector
+        );
+
+
+        // --------------------------------------------------------
+        // Convert scene-break paragraphs to <hr>
+        // --------------------------------------------------------
+
+        for (const paragraph of paragraphs) {
+            if (
+                paragraph.isConnected &&
+                looksLikeSceneBreak(
+                    textOf(paragraph)
+                )
+            ) {
+                const hr =
+                    document.createElement('hr');
+
+                paragraph.replaceWith(hr);
+            }
+        }
+
+
+        // Get paragraphs again because some were replaced.
+        paragraphs = safeQueryAll(
+            container,
+            site.paragraphSelector
+        );
+
+        if (paragraphs.length < 2) {
+            return;
+        }
+
+
+        // --------------------------------------------------------
+        // Merge artificial paragraph breaks
+        // --------------------------------------------------------
+
+        let current = paragraphs[0];
+
+        for (
+            let i = 1;
+            i < paragraphs.length;
+            i++
+        ) {
+            const next = paragraphs[i];
+
+            if (
+                !current.isConnected ||
+                !next.isConnected
+            ) {
+                if (next.isConnected) {
+                    current = next;
+                }
+
+                continue;
+            }
+
+            /*
+             * Never merge across another element.
+             *
+             * This keeps <hr>, headings, images, ads,
+             * navigation, etc. as separate content.
+             */
+            if (!areAdjacent(current, next)) {
+                current = next;
+                continue;
+            }
+
+            if (
+                shouldPreserveBreak(
+                    current,
+                    next,
+                    site
+                )
+            ) {
+                current = next;
+                continue;
+            }
+
+            appendWithSpace(
+                current,
+                next
+            );
+        }
+
+    } finally {
+        processingContainers.delete(container);
+    }
+}
 
     // ============================================================
     // CONTAINER PROCESSING
