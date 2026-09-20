@@ -261,24 +261,69 @@
             .replace(/\s+/g, ' ')
             .trim();
     }
+function looksLikeSceneBreak(text) {
+    return (
+        /^~{2,}$/.test(text) ||
+        /^-{3,}$/.test(text) ||
+        /^_{3,}$/.test(text) ||
+        /^•{2,}$/.test(text) ||
+        /^·{2,}$/.test(text)
+    );
+}
+function convertSceneBreak(element) {
+    if (!element) return false;
 
-    function looksLikeSceneBreak(element) {
-        const text = textOf(element);
+    const text = textOf(element);
 
-        if (!text) {
-            return false;
-        }
+    if (!looksLikeSceneBreak(text)) return false;
 
-        return (
-            /^\*{2,}$/.test(text) ||
-            /^~{2,}$/.test(text) ||
-            /^-{3,}$/.test(text) ||
-            /^_{3,}$/.test(text) ||
-            /^•{2,}$/.test(text) ||
-            /^·{2,}$/.test(text)
-        );
+    const hr = document.createElement('hr');
+    element.replaceWith(hr);
+
+    return true;
+}
+function getNavigationReplacement(element) {
+    if (!element) {
+        return null;
     }
 
+    const text = textOf(element);
+
+    if (!text) {
+        return null;
+    }
+
+    // Next Chapter
+    if (/^next\s+chapter$/i.test(text)) {
+        return '~~>';
+    }
+
+    // Previous Chapter
+    if (/^previous\s+chapter$/i.test(text)) {
+        return '<~~';
+    }
+
+    // TOC / Table of Contents
+    if (
+        /^(?:toc|table\s+of\s+contents)$/i.test(text)
+    ) {
+        return '~~|~~';
+    }
+
+    return null;
+}
+    function cleanNavigationElement(element) {
+    const replacement =
+        getNavigationReplacement(element);
+
+    if (replacement === null) {
+        return false;
+    }
+
+    element.textContent = replacement;
+
+    return true;
+}
     function looksLikeDialogue(element) {
         const text = textOf(element);
 
@@ -383,15 +428,25 @@
 
         processingContainers.add(container);
 
-        try {
-            const paragraphs = safeQueryAll(
-                container,
-                site.paragraphSelector
-            );
+try {
+    const possibleNavigation =
+        safeQueryAll(
+            container,
+            'a, button, nav, [role="button"]'
+        );
 
-            if (paragraphs.length < 2) {
-                return;
-            }
+    for (const element of possibleNavigation) {
+        cleanNavigationElement(element);
+    }
+
+    const paragraphs = safeQueryAll(
+        container,
+        site.paragraphSelector
+    );
+
+    if (paragraphs.length < 2) {
+        return;
+    }
 
             let current = paragraphs[0];
 
@@ -1038,7 +1093,7 @@
                             id="tts-preserve-dialogue"
                             type="checkbox"
                             ${
-                                site?.preserveDialogue !== false
+                                site?.preserveDialogue === true
                                     ? 'checked'
                                     : ''
                             }
@@ -1178,12 +1233,12 @@
                     ?.value
                     .trim() || '',
 
-            preserveDialogue:
-                document
-                    .getElementById(
-                        'tts-preserve-dialogue'
-                    )
-                    ?.checked ?? true
+          preserveDialogue:
+    document
+        .getElementById(
+            'tts-preserve-dialogue'
+        )
+        ?.checked ?? false
         };
     }
 
