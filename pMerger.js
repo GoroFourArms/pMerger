@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.2
+// @version      1.1.3
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
 // @grant        GM_getValue
-// @grant        GM_setValue
+// @grant        GM_setValuegb
 // @grant        GM_registerMenuCommand
 // @grant        GM_unregisterMenuCommand
 // @run-at       document-start
@@ -261,11 +261,13 @@
             .replace(/\s+/g, ' ')
             .trim();
     }
+    
 function looksLikeSceneBreak(text) {
     return (
         /^~{2,}$/.test(text) ||
         /^-{3,}$/.test(text) ||
         /^_{3,}$/.test(text) ||
+        /^\*{2,}$/.test(text) ||
         /^•{2,}$/.test(text) ||
         /^·{2,}$/.test(text)
     );
@@ -289,24 +291,15 @@ function getNavigationReplacement(element) {
 
     const text = textOf(element);
 
-    if (!text) {
-        return null;
-    }
-
-    // Next Chapter
-    if (/^next\s+chapter$/i.test(text)) {
+    if (/^(?:next|next\s+chapter)$/i.test(text)) {
         return '~~>';
     }
 
-    // Previous Chapter
-    if (/^previous\s+chapter$/i.test(text)) {
+    if (/^(?:previous|previous\s+chapter)$/i.test(text)) {
         return '<~~';
     }
 
-    // TOC / Table of Contents
-    if (
-        /^(?:toc|table\s+of\s+contents)$/i.test(text)
-    ) {
+    if (/^(?:toc|contents|table\s+of\s+contents)$/i.test(text)) {
         return '~~|~~';
     }
 
