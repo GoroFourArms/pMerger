@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.3
+// @version      1.1.4
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
 // @grant        GM_getValue
-// @grant        GM_setValuegb
+// @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_unregisterMenuCommand
 // @run-at       document-start
