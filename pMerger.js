@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.13
+// @version      1.1.14
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -22,36 +22,77 @@
     // ============================================================
 
     const STORAGE_KEY = 'ttsCleanerConfig';
-    const processingContainers = new WeakSet();
-  	const originalChapterHTML = new WeakMap();
-  	const modifiedContainers = new Set();
+
     const MAX_MERGED_SENTENCES = 5;
+
+    const originalChapterHTML =
+        new WeakMap();
+
+    const modifiedContainers =
+        new Set();
+
+    const processingContainers =
+        new WeakSet();
+
+    const pendingChapterTimers =
+        new WeakMap();
+
     const DEFAULT_CONFIG = {
         globalEnabled: false,
         sites: {}
     };
 
-    let config = GM_getValue(STORAGE_KEY, DEFAULT_CONFIG);
+    let config =
+        GM_getValue(
+            STORAGE_KEY,
+            DEFAULT_CONFIG
+        );
 
     function loadConfig() {
-        if (!config || typeof config !== 'object') {
+        if (
+            !config ||
+            typeof config !== 'object'
+        ) {
             config = {};
         }
 
-        if (typeof config.globalEnabled !== 'boolean') {
+        if (
+            typeof config.globalEnabled !==
+            'boolean'
+        ) {
             config.globalEnabled = false;
         }
 
-        if (!config.sites || typeof config.sites !== 'object') {
+        if (
+            !config.sites ||
+            typeof config.sites !== 'object'
+        ) {
             config.sites = {};
         }
     }
 
     function saveConfig() {
-        GM_setValue(STORAGE_KEY, config);
+        GM_setValue(
+            STORAGE_KEY,
+            config
+        );
     }
 
     loadConfig();
+
+
+    // ============================================================
+    // RUNTIME STATE
+    // ============================================================
+
+    let observer = null;
+    let urlWatcher = null;
+    let lastUrl = location.href;
+
+    let applyMenuId = null;
+    let undoMenuId = null;
+    let toggleMenuId = null;
+    let settingsMenuId = null;
 
 
     // ============================================================
@@ -65,7 +106,11 @@
     }
 
     function getCurrentSite() {
-        return config.sites[getDomain()] || null;
+        return (
+            config.sites[
+                getDomain()
+            ] || null
+        );
     }
 
 
@@ -73,56 +118,59 @@
     // MENU COMMANDS
     // ============================================================
 
-      let applyMenuId = null;
-      let undoMenuId = null;
-      let toggleMenuId = null;
-      let settingsMenuId = null;
-     let observer = null;
-
-function registerMenuCommands() {
-    for (const id of [
-        applyMenuId,
-        undoMenuId,
-        toggleMenuId,
-        settingsMenuId
-    ]) {
-        if (
-            id !== null &&
-            typeof GM_unregisterMenuCommand === 'function'
-        ) {
-            try {
-                GM_unregisterMenuCommand(id);
-            } catch {
-                // Ignore unsupported/invalid IDs.
+    function registerMenuCommands() {
+        for (const id of [
+            applyMenuId,
+            undoMenuId,
+            toggleMenuId,
+            settingsMenuId
+        ]) {
+            if (
+                id !== null &&
+                typeof GM_unregisterMenuCommand ===
+                    'function'
+            ) {
+                try {
+                    GM_unregisterMenuCommand(id);
+                } catch {
+                    // Ignore unsupported/invalid IDs.
+                }
             }
         }
+
+        applyMenuId =
+            GM_registerMenuCommand(
+                'pMerger: Apply',
+                applyCurrentPage
+            );
+
+        undoMenuId =
+            GM_registerMenuCommand(
+                'pMerger: Undo',
+                undoCurrentPage
+            );
+
+        toggleMenuId =
+            GM_registerMenuCommand(
+                `pMerger: ${
+                    config.globalEnabled
+                        ? 'ON'
+                        : 'OFF'
+                }`,
+                toggleCleaner
+            );
+
+        settingsMenuId =
+            GM_registerMenuCommand(
+                'pMerger — Settings',
+                openSettings
+            );
     }
 
-    applyMenuId = GM_registerMenuCommand(
-        'pMerger: Apply',
-        applyCurrentPage
-    );
-
-    undoMenuId = GM_registerMenuCommand(
-        'pMerger: Undo',
-        undoCurrentPage
-    );
-
-    toggleMenuId = GM_registerMenuCommand(
-        `TTS Cleaner: ${
-            config.globalEnabled ? 'ON' : 'OFF'
-        }`,
-        toggleCleaner
-    );
-
-    settingsMenuId = GM_registerMenuCommand(
-        'TTS Cleaner — Settings',
-        openSettings
-    );
-}
-
     function toggleCleaner() {
-        config.globalEnabled = !config.globalEnabled;
+        config.globalEnabled =
+            !config.globalEnabled;
+
         saveConfig();
 
         registerMenuCommands();
@@ -134,20 +182,29 @@ function registerMenuCommands() {
         }
     }
 
-    // Register immediately.
-    registerMenuCommands();
-
 
     // ============================================================
     // URL PATTERNS
     // ============================================================
 
     function wildcardToRegex(pattern) {
-        const escaped = pattern
-            .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-            .replace(/\*/g, '.*');
+        const escaped =
+            pattern
+                .replace(
+                    /[.+?^${}()|[\]\\]/g,
+                    '\\$&'
+                )
+                .replace(
+                    /\*/g,
+                    '.*'
+                );
 
-        return new RegExp('^' + escaped + '$', 'i');
+        return new RegExp(
+            '^' +
+                escaped +
+                '$',
+            'i'
+        );
     }
 
     function matchesUrlPattern(pattern) {
@@ -155,18 +212,24 @@ function registerMenuCommands() {
             return false;
         }
 
-        pattern = pattern.trim();
+        pattern =
+            pattern.trim();
 
         if (!pattern) {
             return false;
         }
 
         try {
-            const target = pattern.startsWith('/')
-                ? location.pathname + location.search + location.hash
-                : location.href;
+            const target =
+                pattern.startsWith('/')
+                    ? location.pathname +
+                      location.search +
+                      location.hash
+                    : location.href;
 
-            return wildcardToRegex(pattern).test(target);
+            return wildcardToRegex(
+                pattern
+            ).test(target);
         } catch {
             return false;
         }
@@ -177,28 +240,40 @@ function registerMenuCommands() {
             return false;
         }
 
-        const site = getCurrentSite();
+        const site =
+            getCurrentSite();
 
-        if (!site || site.enabled === false) {
-            return false;
-        }
-
-        if (!site.chapterContainer) {
-            return false;
-        }
-
-        if (!site.paragraphSelector) {
+        if (
+            !site ||
+            site.enabled === false
+        ) {
             return false;
         }
 
         if (
-            !Array.isArray(site.chapterUrlPatterns) ||
+            !site.chapterContainer
+        ) {
+            return false;
+        }
+
+        if (
+            !site.paragraphSelector
+        ) {
+            return false;
+        }
+
+        if (
+            !Array.isArray(
+                site.chapterUrlPatterns
+            ) ||
             site.chapterUrlPatterns.length === 0
         ) {
             return false;
         }
 
-        return site.chapterUrlPatterns.some(matchesUrlPattern);
+        return site.chapterUrlPatterns.some(
+            matchesUrlPattern
+        );
     }
 
 
@@ -206,9 +281,23 @@ function registerMenuCommands() {
     // SELECTOR HELPERS
     // ============================================================
 
-    function safeQueryAll(root, selector) {
+    function safeQueryAll(
+        root,
+        selector
+    ) {
+        if (
+            !root ||
+            !selector
+        ) {
+            return [];
+        }
+
         try {
-            return Array.from(root.querySelectorAll(selector));
+            return Array.from(
+                root.querySelectorAll(
+                    selector
+                )
+            );
         } catch (error) {
             console.warn(
                 '[pMerger] Invalid selector:',
@@ -220,54 +309,80 @@ function registerMenuCommands() {
         }
     }
 
-    function elementMatches(element, selector) {
+    function elementMatches(
+        element,
+        selector
+    ) {
         if (
             !element ||
-            element.nodeType !== Node.ELEMENT_NODE
+            element.nodeType !==
+                Node.ELEMENT_NODE ||
+            !selector
         ) {
             return false;
         }
 
         try {
-            return element.matches(selector);
+            return element.matches(
+                selector
+            );
         } catch {
             return false;
         }
     }
 
-    function findChapterContainers(root, selector) {
+    function findChapterContainers(
+        root,
+        selector
+    ) {
         const results = [];
 
         if (
             root &&
-            root.nodeType === Node.ELEMENT_NODE &&
-            elementMatches(root, selector)
+            root.nodeType ===
+                Node.ELEMENT_NODE &&
+            elementMatches(
+                root,
+                selector
+            )
         ) {
             results.push(root);
         }
 
-        results.push(...safeQueryAll(root, selector));
+        results.push(
+            ...safeQueryAll(
+                root,
+                selector
+            )
+        );
 
-        return [...new Set(results)];
+        return [
+            ...new Set(results)
+        ];
     }
 
-    function closestChapter(element, selector) {
+    function closestChapter(
+        element,
+        selector
+    ) {
         if (
             !element ||
-            element.nodeType !== Node.ELEMENT_NODE
+            element.nodeType !==
+                Node.ELEMENT_NODE ||
+            !selector
         ) {
             return null;
         }
 
         try {
-            return element.closest(selector);
+            return element.closest(
+                selector
+            );
         } catch {
             return null;
         }
     }
-
-
-    // ============================================================
+        // ============================================================
     // TEXT / BREAK DETECTION
     // ============================================================
 
@@ -276,625 +391,1701 @@ function registerMenuCommands() {
             .replace(/\s+/g, ' ')
             .trim();
     }
+
     function countSentences(text) {
-    if (!text) {
-        return 0;
-    }
-
-    const matches =
-        text.match(/[.!?]+(?=\s|$)/g);
-
-    return matches ? matches.length : 0;
-}
-function looksLikeSceneBreak(text) {
-    return (
-        /^~{2,}$/.test(text) ||
-        /^-{3,}$/.test(text) ||
-        /^_{3,}$/.test(text) ||
-        /^\*{2,}$/.test(text) ||
-        /^•{2,}$/.test(text) ||
-        /^·{2,}$/.test(text)
-    );
-}
-function removeJunk(container, site) {
-    if (!site.junkSelector) {
-        return;
-    }
-
-    const junk = safeQueryAll(
-        container,
-        site.junkSelector
-    );
-
-    for (const element of junk) {
-        if (element.isConnected) {
-            element.remove();
+        if (!text) {
+            return 0;
         }
-    }
-}
-function getNavigationReplacement(element) {
-    if (!element) {
-        return null;
-    }
 
-    const text = textOf(element);
+        const matches =
+            text.match(
+                /[.!?]+(?=\s|$)/g
+            );
 
-    if (/^(?:next|next\s+chapter)$/i.test(text)) {
-        return '~~>';
+        return matches
+            ? matches.length
+            : 0;
     }
 
-    if (/^(?:previous|previous\s+chapter)$/i.test(text)) {
-        return '<~~';
-    }
-
-if (
-    /^(?:toc|contents|table\s+of\s+contents|index)$/i.test(text)
-) {
-    return '~~|~~';
-}
-
-    return null;
-}
-
-function cleanNavigationElement(element) {
-    const replacement =
-        getNavigationReplacement(element);
-
-    if (replacement === null) {
-        return false;
-    }
-
-    element.textContent = replacement;
-
-    return true;
-}
-
-function looksLikeDialogue(element) {
-    const text = textOf(element);
-
-    if (!text) {
-        return false;
-    }
-
-    // Dialogue beginning with quotation marks.
-    if (/^["“‘「『]/.test(text)) {
-        return true;
-    }
-
-    // Dialogue beginning with an em/en dash.
-    if (/^[—–]\s*\S/.test(text)) {
-        return true;
-    }
-
-    return false;
-}
-
-    // ============================================================
-    // PARAGRAPH MERGING
-    // ============================================================
-
-function areAdjacent(first, second) {
-    if (!first || !second) {
-        return false;
-    }
-
-    return first.nextElementSibling === second;
-}
-function appendWithSpace(first, second) {
-    const firstText = first.textContent || '';
-    const secondText = second.textContent || '';
-
-    if (
-        firstText &&
-        secondText &&
-        !/\s$/.test(firstText) &&
-        !/^\s/.test(secondText)
-    ) {
-        first.appendChild(
-            document.createTextNode(' ')
+    function looksLikeSceneBreak(text) {
+        return (
+            /^~{2,}$/.test(text) ||
+            /^-{3,}$/.test(text) ||
+            /^_{3,}$/.test(text) ||
+            /^\*{2,}$/.test(text) ||
+            /^•{2,}$/.test(text) ||
+            /^·{2,}$/.test(text)
         );
     }
 
-    while (second.firstChild) {
-        first.appendChild(second.firstChild);
+
+    // ============================================================
+    // JUNK
+    // ============================================================
+
+    function removeJunk(
+        container,
+        site
+    ) {
+        if (
+            !site ||
+            !site.junkSelector
+        ) {
+            return;
+        }
+
+        const junk =
+            safeQueryAll(
+                container,
+                site.junkSelector
+            );
+
+        for (const element of junk) {
+            if (element.isConnected) {
+                element.remove();
+            }
+        }
     }
 
-    second.remove();
-}
-function saveOriginalChapter(container) {
-    if (!originalChapterHTML.has(container)) {
+
+    // ============================================================
+    // NAVIGATION
+    // ============================================================
+
+    function getNavigationReplacement(
+        element
+    ) {
+        if (!element) {
+            return null;
+        }
+
+        const text =
+            textOf(element);
+
+        if (
+            /^(?:next|next\s+chapter)$/i.test(
+                text
+            )
+        ) {
+            return '~~>';
+        }
+
+        if (
+            /^(?:previous|previous\s+chapter)$/i.test(
+                text
+            )
+        ) {
+            return '<~~';
+        }
+
+        if (
+            /^(?:toc|contents|table\s+of\s+contents|index)$/i.test(
+                text
+            )
+        ) {
+            return '~~|~~';
+        }
+
+        return null;
+    }
+
+    function cleanNavigationElement(
+        element
+    ) {
+        const replacement =
+            getNavigationReplacement(
+                element
+            );
+
+        if (
+            replacement === null
+        ) {
+            return false;
+        }
+
+        element.textContent =
+            replacement;
+
+        return true;
+    }
+
+
+    // ============================================================
+    // DIALOGUE
+    // ============================================================
+
+    function looksLikeDialogue(
+        element
+    ) {
+        const text =
+            textOf(element);
+
+        if (!text) {
+            return false;
+        }
+
+        /*
+         * Dialogue beginning with quotation marks.
+         */
+        if (
+            /^["“‘「『]/.test(text)
+        ) {
+            return true;
+        }
+
+        /*
+         * Dialogue beginning with an
+         * em dash or en dash.
+         */
+        if (
+            /^[—–]\s*\S/.test(text)
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+
+    // ============================================================
+    // PARAGRAPH HELPERS
+    // ============================================================
+
+    function areAdjacent(
+        first,
+        second
+    ) {
+        if (
+            !first ||
+            !second
+        ) {
+            return false;
+        }
+
+        return (
+            first.nextElementSibling ===
+            second
+        );
+    }
+
+    function appendWithSpace(
+        first,
+        second
+    ) {
+        const firstText =
+            first.textContent || '';
+
+        const secondText =
+            second.textContent || '';
+
+        if (
+            firstText &&
+            secondText &&
+            !/\s$/.test(firstText) &&
+            !/^\s/.test(secondText)
+        ) {
+            first.appendChild(
+                document.createTextNode(
+                    ' '
+                )
+            );
+        }
+
+        while (
+            second.firstChild
+        ) {
+            first.appendChild(
+                second.firstChild
+            );
+        }
+
+        second.remove();
+    }
+
+
+    // ============================================================
+    // ORIGINAL CONTENT
+    // ============================================================
+
+    function saveOriginalChapter(
+        container
+    ) {
+        if (
+            originalChapterHTML.has(
+                container
+            )
+        ) {
+            return;
+        }
+
         originalChapterHTML.set(
             container,
             container.innerHTML
         );
 
-        modifiedContainers.add(container);
-    }
-}
-function applyCurrentPage() {
-    const site = getCurrentSite();
-
-    if (!site) {
-        return;
-    }
-
-    if (!site.chapterContainer) {
-        return;
-    }
-
-    if (!site.paragraphSelector) {
-        return;
-    }
-
-    if (
-        !Array.isArray(site.chapterUrlPatterns) ||
-        site.chapterUrlPatterns.length === 0
-    ) {
-        return;
-    }
-
-    if (
-        !site.chapterUrlPatterns.some(matchesUrlPattern)
-    ) {
-        return;
-    }
-
-    const containers = findChapterContainers(
-        document,
-        site.chapterContainer
-    );
-
-    for (const container of containers) {
-        saveOriginalChapter(container);
-        cleanChapter(container, site);
-    }
-}
-function undoCurrentPage() {
-    const wasObserving = observer !== null;
-
-    if (wasObserving) {
-        stopObserver();
-    }
-
-    for (const container of modifiedContainers) {
-        const original =
-            originalChapterHTML.get(container);
-
-        if (
-            original !== undefined &&
-            container.isConnected
-        ) {
-            container.innerHTML = original;
-        }
-
-        originalChapterHTML.delete(container);
-    }
-
-    modifiedContainers.clear();
-
-    if (wasObserving && config.globalEnabled) {
-        startObserver();
-    }
-}
-  function handleAddedNode(node) {
-    if (
-        !node ||
-        node.nodeType !== Node.ELEMENT_NODE
-    ) {
-        return;
-    }
-
-    if (!config.globalEnabled) {
-        return;
-    }
-
-    if (!isChapterPage()) {
-        return;
-    }
-
-    const site = getCurrentSite();
-
-    if (!site) {
-        return;
-    }
-
-    const newContainers = findChapterContainers(
-        node,
-        site.chapterContainer
-    );
-
-    for (const container of newContainers) {
-        scheduleContainer(container, 75);
-    }
-
-    let parentChapter = null;
-
-    if (
-        elementMatches(
-            node,
-            site.chapterContainer
-        )
-    ) {
-        parentChapter = node;
-    } else {
-        parentChapter = closestChapter(
-            node,
-            site.chapterContainer
+        modifiedContainers.add(
+            container
         );
     }
+        // ============================================================
+    // PARAGRAPH WRAPPERS
+    // ============================================================
 
-    if (parentChapter) {
-        scheduleContainer(
-            parentChapter,
-            100
-        );
-    }
-}
-function flattenParagraphWrappers(container, site) {
-    const paragraphs = safeQueryAll(
+    function flattenParagraphWrappers(
         container,
-        site.paragraphSelector
-    );
-
-    if (paragraphs.length < 2) {
-        return;
-    }
-
-    const wrappers = [];
-
-    for (const paragraph of paragraphs) {
-        const wrapper = paragraph.parentElement;
-
+        site
+    ) {
         if (
-            !wrapper ||
-            wrapper.parentElement !== container
+            !site ||
+            !site.paragraphSelector
         ) {
-            continue;
+            return;
         }
 
-        if (!wrappers.includes(wrapper)) {
-            wrappers.push(wrapper);
-        }
-    }
+        const paragraphs =
+            safeQueryAll(
+                container,
+                site.paragraphSelector
+            );
 
-    if (wrappers.length < 2) {
-        return;
-    }
-
-    for (let i = 0; i < wrappers.length; i++) {
-        const first = wrappers[i];
-
-        if (!first.isConnected) {
-            continue;
-        }
-
-        let next = first.nextElementSibling;
-
-        while (
-            next &&
-            next.tagName === first.tagName &&
-            next.className === first.className
-        ) {
-            const nextParagraphs =
-                safeQueryAll(
-                    next,
-                    site.paragraphSelector
-                );
-
-            for (const paragraph of nextParagraphs) {
-                first.appendChild(paragraph);
+        for (const paragraph of paragraphs) {
+            if (!paragraph.parentElement) {
+                continue;
             }
 
-            const wrapperToRemove = next;
-            next = next.nextElementSibling;
+            /*
+             * If the paragraph is already a direct child
+             * of the chapter container, nothing needs changing.
+             */
+            if (
+                paragraph.parentElement ===
+                container
+            ) {
+                continue;
+            }
 
-            wrapperToRemove.remove();
+            /*
+             * Only flatten simple wrappers that contain
+             * this paragraph and nothing else meaningful.
+             */
+            const wrapper =
+                paragraph.parentElement;
+
+            if (
+                wrapper.children.length === 1 &&
+                wrapper.parentElement ===
+                    container
+            ) {
+                container.appendChild(
+                    paragraph
+                );
+
+                wrapper.remove();
+            }
         }
     }
-}
-function cleanChapter(container, site) {
-    if (
-        !container ||
-        !container.isConnected
+
+
+    // ============================================================
+    // NAVIGATION CLEANING
+    // ============================================================
+
+    function cleanNavigation(
+        container
     ) {
-        return;
-    }
-
-    if (processingContainers.has(container)) {
-        return;
-    }
-
-    saveOriginalChapter(container);
-
-    processingContainers.add(container);
-
-    try {
-        // --------------------------------------------------------
-        // Remove junk before merging
-        // --------------------------------------------------------
-
-        removeJunk(
-            container,
-            site
-        );
-
-        // --------------------------------------------------------
-        // Navigation text
-        // --------------------------------------------------------
-
-        const possibleNavigation =
+        const elements =
             safeQueryAll(
                 container,
                 'a, button, [role="button"]'
             );
 
-        for (const element of possibleNavigation) {
-            cleanNavigationElement(element);
+        for (const element of elements) {
+            cleanNavigationElement(
+                element
+            );
         }
+    }
 
-        // --------------------------------------------------------
-        // Flatten paragraph wrappers
-        // --------------------------------------------------------
 
-        flattenParagraphWrappers(
-            container,
-            site
-        );
+    // ============================================================
+    // SCENE BREAKS
+    // ============================================================
 
-        let paragraphs = safeQueryAll(
-            container,
-            site.paragraphSelector
-        );
-
-        // --------------------------------------------------------
-        // Convert scene breaks to <hr>
-        // --------------------------------------------------------
-
-        for (const paragraph of paragraphs) {
-            if (
-                paragraph.isConnected &&
-                looksLikeSceneBreak(
-                    textOf(paragraph)
-                )
-            ) {
-                const hr =
-                    document.createElement('hr');
-
-                paragraph.replaceWith(hr);
-            }
-        }
-
-        paragraphs = safeQueryAll(
-            container,
-            site.paragraphSelector
-        );
-
-        if (paragraphs.length < 2) {
+    function convertSceneBreaks(
+        container,
+        site
+    ) {
+        if (
+            !site ||
+            !site.paragraphSelector
+        ) {
             return;
         }
 
-        // --------------------------------------------------------
-        // Merge artificial paragraph breaks
-        // --------------------------------------------------------
+        const paragraphs =
+            safeQueryAll(
+                container,
+                site.paragraphSelector
+            );
 
-        let current = paragraphs[0];
+        for (const paragraph of paragraphs) {
+            const text =
+                textOf(paragraph);
 
-        let previousWasDialogue =
-            looksLikeDialogue(current);
+            if (
+                !looksLikeSceneBreak(
+                    text
+                )
+            ) {
+                continue;
+            }
+
+            const hr =
+                document.createElement(
+                    'hr'
+                );
+
+            paragraph.replaceWith(
+                hr
+            );
+        }
+    }
+
+
+    // ============================================================
+    // MERGING
+    // ============================================================
+
+    function mergeParagraphs(
+        container,
+        site
+    ) {
+        if (
+            !site ||
+            !site.paragraphSelector
+        ) {
+            return;
+        }
+
+        /*
+         * Only work with paragraphs that are direct
+         * children of this chapter container.
+         */
+        let paragraphs =
+            Array.from(
+                container.children
+            ).filter(
+                element =>
+                    elementMatches(
+                        element,
+                        site.paragraphSelector
+                    )
+            );
+
+        let sentenceCount = 0;
+        let previousWasDialogue = false;
 
         for (
-            let i = 1;
+            let i = 0;
             i < paragraphs.length;
             i++
         ) {
-            const next = paragraphs[i];
+            const current =
+                paragraphs[i];
 
             if (
-                !current.isConnected ||
-                !next.isConnected
+                !current.isConnected
             ) {
-                if (next.isConnected) {
-                    current = next;
-                    previousWasDialogue =
-                        looksLikeDialogue(next);
+                continue;
+            }
+
+            const currentText =
+                textOf(current);
+
+            if (!currentText) {
+                continue;
+            }
+
+            /*
+             * Scene breaks and other non-paragraph
+             * elements reset the merge chain.
+             */
+            if (
+                looksLikeSceneBreak(
+                    currentText
+                )
+            ) {
+                sentenceCount = 0;
+                previousWasDialogue = false;
+                continue;
+            }
+
+            const currentIsDialogue =
+                looksLikeDialogue(
+                    current
+                );
+
+            /*
+             * Find the previous connected paragraph.
+             */
+            let previous = null;
+
+            for (
+                let j = i - 1;
+                j >= 0;
+                j--
+            ) {
+                if (
+                    paragraphs[j].isConnected
+                ) {
+                    previous =
+                        paragraphs[j];
+                    break;
                 }
-
-                continue;
             }
 
-            if (!areAdjacent(current, next)) {
-                current = next;
+            if (!previous) {
+                sentenceCount =
+                    countSentences(
+                        currentText
+                    );
+
                 previousWasDialogue =
-                    looksLikeDialogue(next);
+                    currentIsDialogue;
 
                 continue;
             }
 
-            const nextIsDialogue =
-                looksLikeDialogue(next);
+            const previousText =
+                textOf(previous);
 
-            // Keep a break only when two dialogue
-            // paragraphs are directly back-to-back.
+            /*
+             * If something other than a paragraph
+             * sits between them, do not merge.
+             */
+            if (
+                !areAdjacent(
+                    previous,
+                    current
+                )
+            ) {
+                sentenceCount =
+                    countSentences(
+                        currentText
+                    );
+
+                previousWasDialogue =
+                    currentIsDialogue;
+
+                continue;
+            }
+
+            /*
+             * Two dialogue paragraphs directly
+             * beside each other create a break.
+             */
             if (
                 previousWasDialogue &&
-                nextIsDialogue
+                currentIsDialogue
             ) {
-                current = next;
-                previousWasDialogue = nextIsDialogue;
+                sentenceCount =
+                    countSentences(
+                        currentText
+                    );
+
+                previousWasDialogue =
+                    currentIsDialogue;
+
                 continue;
             }
 
-            const combinedText =
-                (current.textContent || '') +
-                ' ' +
-                (next.textContent || '');
+            const currentSentences =
+                countSentences(
+                    currentText
+                );
 
-            // Maximum 5 sentences per <p>.
+            /*
+             * Never create a merged paragraph with
+             * more than the configured sentence limit.
+             */
             if (
-                countSentences(combinedText) >
-                MAX_MERGED_SENTENCES
+                sentenceCount > 0 &&
+                sentenceCount +
+                    currentSentences >
+                    MAX_MERGED_SENTENCES
             ) {
-                current = next;
-                previousWasDialogue = nextIsDialogue;
+                sentenceCount =
+                    currentSentences;
+
+                previousWasDialogue =
+                    currentIsDialogue;
+
                 continue;
             }
 
+            /*
+             * Merge current into previous.
+             */
             appendWithSpace(
-                current,
-                next
+                previous,
+                current
             );
 
-            previousWasDialogue = nextIsDialogue;
+            sentenceCount +=
+                currentSentences;
+
+            /*
+             * Remove the consumed paragraph
+             * from our working list.
+             */
+            paragraphs.splice(
+                i,
+                1
+            );
+
+            i--;
+
+            previousWasDialogue =
+                currentIsDialogue;
         }
-    } finally {
-        processingContainers.delete(container);
-    }
-}
-function startObserver() {
-    if (observer) {
-        return;
     }
 
-    if (!document.documentElement) {
-        return;
+
+    // ============================================================
+    // CLEAN ONE CHAPTER
+    // ============================================================
+
+    function cleanChapter(
+        container,
+        site
+    ) {
+        if (
+            !container ||
+            !site
+        ) {
+            return;
+        }
+
+        if (
+            processingContainers.has(
+                container
+            )
+        ) {
+            return;
+        }
+
+        processingContainers.add(
+            container
+        );
+
+        try {
+            saveOriginalChapter(
+                container
+            );
+
+            /*
+             * Remove manually configured junk first.
+             */
+            removeJunk(
+                container,
+                site
+            );
+
+            /*
+             * Convert navigation links/buttons
+             * into harmless text markers.
+             */
+            cleanNavigation(
+                container
+            );
+
+            /*
+             * Convert scene-break paragraphs
+             * before flattening/merging.
+             */
+            convertSceneBreaks(
+                container,
+                site
+            );
+
+            /*
+             * Turn structures such as:
+             *
+             * div.paragraph > p.line
+             *
+             * into:
+             *
+             * chapter > p.line
+             *
+             * so paragraphs can actually become
+             * adjacent siblings.
+             */
+            flattenParagraphWrappers(
+                container,
+                site
+            );
+
+            /*
+             * Merge artificial paragraph breaks.
+             */
+            mergeParagraphs(
+                container,
+                site
+            );
+        } finally {
+            processingContainers.delete(
+                container
+            );
+        }
     }
 
-    observer = new MutationObserver(
-        mutations => {
-            if (!config.globalEnabled) {
-                return;
-            }
 
-            if (!isChapterPage()) {
-                return;
-            }
+    // ============================================================
+    // CLEAN ALL CHAPTERS ON PAGE
+    // ============================================================
 
-            const site = getCurrentSite();
+    function cleanCurrentPage() {
+        if (!isChapterPage()) {
+            return 0;
+        }
 
-            if (!site) {
-                return;
-            }
+        const site =
+            getCurrentSite();
 
-            for (const mutation of mutations) {
-                /*
-                 * Ignore mutations made inside paragraphs.
-                 * This prevents the cleaner from reacting to
-                 * its own text merging.
-                 */
+        if (!site) {
+            return 0;
+        }
+
+        const containers =
+            findChapterContainers(
+                document,
+                site.chapterContainer
+            );
+
+        for (const container of containers) {
+            cleanChapter(
+                container,
+                site
+            );
+        }
+
+        return containers.length;
+    }
+        // ============================================================
+    // TIMER HELPERS
+    // ============================================================
+
+    function cancelContainerTimer(
+        container
+    ) {
+        const timer =
+            pendingChapterTimers.get(
+                container
+            );
+
+        if (
+            timer !== undefined
+        ) {
+            clearTimeout(timer);
+
+            pendingChapterTimers.delete(
+                container
+            );
+        }
+    }
+
+    function scheduleContainer(
+        container,
+        site,
+        delay = 100
+    ) {
+        if (
+            !container ||
+            !site
+        ) {
+            return;
+        }
+
+        cancelContainerTimer(
+            container
+        );
+
+        const timer =
+            setTimeout(() => {
+                pendingChapterTimers.delete(
+                    container
+                );
+
                 if (
-                    mutation.target &&
-                    mutation.target.nodeType ===
-                        Node.ELEMENT_NODE &&
-                    elementMatches(
-                        mutation.target,
-                        site.paragraphSelector
+                    !config.globalEnabled ||
+                    !container.isConnected
+                ) {
+                    return;
+                }
+
+                const currentSite =
+                    getCurrentSite();
+
+                if (
+                    !currentSite ||
+                    currentSite !== site
+                ) {
+                    return;
+                }
+
+                cleanChapter(
+                    container,
+                    site
+                );
+            }, delay);
+
+        pendingChapterTimers.set(
+            container,
+            timer
+        );
+    }
+
+
+    // ============================================================
+    // APPLY
+    // ============================================================
+
+    function applyCurrentPage() {
+        const site =
+            getCurrentSite();
+
+        if (!site) {
+            return;
+        }
+
+        if (
+            site.enabled === false
+        ) {
+            return;
+        }
+
+        if (
+            !site.chapterContainer ||
+            !site.paragraphSelector
+        ) {
+            return;
+        }
+
+        if (
+            !Array.isArray(
+                site.chapterUrlPatterns
+            ) ||
+            site.chapterUrlPatterns.length === 0
+        ) {
+            return;
+        }
+
+        /*
+         * Manual Apply must work even when the
+         * master switch is currently OFF.
+         */
+        const matches =
+            site.chapterUrlPatterns.some(
+                matchesUrlPattern
+            );
+
+        if (!matches) {
+            return;
+        }
+
+        const containers =
+            findChapterContainers(
+                document,
+                site.chapterContainer
+            );
+
+        for (const container of containers) {
+            cleanChapter(
+                container,
+                site
+            );
+        }
+    }
+
+
+    // ============================================================
+    // UNDO
+    // ============================================================
+
+    function undoCurrentPage() {
+        /*
+         * Stop the observer first so restoring the original
+         * HTML does not immediately trigger another cleanup.
+         */
+        stopObserver();
+
+        /*
+         * Cancel timers belonging to containers we know
+         * were modified.
+         */
+        for (
+            const container of modifiedContainers
+        ) {
+            cancelContainerTimer(
+                container
+            );
+        }
+
+        /*
+         * Restore each saved chapter.
+         */
+        for (
+            const container of modifiedContainers
+        ) {
+            const originalHTML =
+                originalChapterHTML.get(
+                    container
+                );
+
+            if (
+                originalHTML === undefined
+            ) {
+                continue;
+            }
+
+            if (
+                container.isConnected
+            ) {
+                container.innerHTML =
+                    originalHTML;
+            }
+        }
+
+        /*
+         * Clear all saved snapshots for the page.
+         */
+        for (
+            const container of modifiedContainers
+        ) {
+            originalChapterHTML.delete(
+                container
+            );
+        }
+
+        modifiedContainers.clear();
+
+        /*
+         * Restart automatic processing if enabled.
+         */
+        if (config.globalEnabled) {
+            startObserver();
+        }
+    }
+
+
+    // ============================================================
+    // MUTATION HANDLING
+    // ============================================================
+
+    function handleAddedNode(
+        node,
+        site
+    ) {
+        if (
+            !node ||
+            node.nodeType !==
+                Node.ELEMENT_NODE
+        ) {
+            return;
+        }
+
+        /*
+         * If the added node itself is a chapter,
+         * process it.
+         */
+        const ownChapter =
+            elementMatches(
+                node,
+                site.chapterContainer
+            )
+                ? node
+                : null;
+
+        if (ownChapter) {
+            scheduleContainer(
+                ownChapter,
+                site
+            );
+        }
+
+        /*
+         * Also look for chapters inside the
+         * newly added node.
+         */
+        const chapters =
+            findChapterContainers(
+                node,
+                site.chapterContainer
+            );
+
+        for (const chapter of chapters) {
+            scheduleContainer(
+                chapter,
+                site
+            );
+        }
+
+        /*
+         * If content was inserted inside an existing
+         * chapter, process that chapter instead.
+         */
+        const parentChapter =
+            closestChapter(
+                node,
+                site.chapterContainer
+            );
+
+        if (parentChapter) {
+            scheduleContainer(
+                parentChapter,
+                site
+            );
+        }
+    }
+
+
+    function handleMutations(
+        mutations
+    ) {
+        if (!config.globalEnabled) {
+            return;
+        }
+
+        if (!isChapterPage()) {
+            return;
+        }
+
+        const site =
+            getCurrentSite();
+
+        if (!site) {
+            return;
+        }
+
+        for (const mutation of mutations) {
+            if (
+                mutation.type !==
+                'childList'
+            ) {
+                continue;
+            }
+
+            /*
+             * Ignore mutations caused only by
+             * text/attribute changes.
+             */
+            if (
+                mutation.addedNodes.length === 0
+            ) {
+                continue;
+            }
+
+            for (
+                const node of mutation.addedNodes
+            ) {
+                handleAddedNode(
+                    node,
+                    site
+                );
+            }
+        }
+    }
+
+
+    // ============================================================
+    // MUTATION OBSERVER
+    // ============================================================
+
+    function startObserver() {
+        stopObserver();
+
+        if (!config.globalEnabled) {
+            return;
+        }
+
+        if (!isChapterPage()) {
+            return;
+        }
+
+        observer =
+            new MutationObserver(
+                handleMutations
+            );
+
+        observer.observe(
+            document.body,
+            {
+                childList: true,
+                subtree: true
+            }
+        );
+    }
+
+
+    function stopObserver() {
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+    }
+
+
+    // ============================================================
+    // START / STOP
+    // ============================================================
+
+    function startCleaner() {
+        stopObserver();
+
+        if (!isChapterPage()) {
+            return;
+        }
+
+        cleanCurrentPage();
+
+        startObserver();
+
+        startUrlWatcher();
+    }
+
+
+    function stopCleaner() {
+        stopObserver();
+
+        stopUrlWatcher();
+    }
+        // ============================================================
+    // URL WATCHER
+    // ============================================================
+
+    function startUrlWatcher() {
+        stopUrlWatcher();
+
+        lastUrl = location.href;
+
+        urlWatcher = setInterval(() => {
+            if (location.href === lastUrl) {
+                return;
+            }
+
+            lastUrl = location.href;
+
+            /*
+             * The site may have changed chapters without
+             * performing a full page reload.
+             */
+            if (config.globalEnabled) {
+                stopObserver();
+
+                setTimeout(() => {
+                    if (
+                        config.globalEnabled &&
+                        isChapterPage()
+                    ) {
+                        cleanCurrentPage();
+                        startObserver();
+                    }
+                }, 150);
+            }
+        }, 500);
+    }
+
+
+    function stopUrlWatcher() {
+        if (urlWatcher !== null) {
+            clearInterval(
+                urlWatcher
+            );
+
+            urlWatcher = null;
+        }
+    }
+
+
+    // ============================================================
+    // SETTINGS HELPERS
+    // ============================================================
+
+    function getFormSettings(
+        form
+    ) {
+        const site =
+            getCurrentSite() || {};
+
+        return {
+            enabled:
+                form.enabled.checked,
+
+            chapterUrlPatterns:
+                form.chapterUrlPatterns.value
+                    .split('\n')
+                    .map(
+                        value =>
+                            value.trim()
                     )
-                ) {
-                    continue;
-                }
+                    .filter(Boolean),
+
+            chapterContainer:
+                form.chapterContainer.value
+                    .trim(),
+
+            paragraphSelector:
+                form.paragraphSelector.value
+                    .trim(),
+
+            junkSelector:
+                form.junkSelector.value
+                    .trim()
+        };
+    }
+
+
+    function createSettingsField(
+        labelText,
+        value,
+        type = 'text'
+    ) {
+        const wrapper =
+            document.createElement(
+                'label'
+            );
+
+        wrapper.style.display =
+            'block';
+
+        wrapper.style.marginBottom =
+            '12px';
+
+        const label =
+            document.createElement(
+                'div'
+            );
+
+        label.textContent =
+            labelText;
+
+        label.style.fontWeight =
+            'bold';
+
+        label.style.marginBottom =
+            '4px';
+
+        const input =
+            document.createElement(
+                type === 'textarea'
+                    ? 'textarea'
+                    : 'input'
+            );
+
+        if (type !== 'textarea') {
+            input.type = type;
+        }
+
+        input.value =
+            value || '';
+
+        input.style.width =
+            '100%';
+
+        input.style.boxSizing =
+            'border-box';
+
+        input.style.padding =
+            '6px';
+
+        if (
+            type === 'textarea'
+        ) {
+            input.rows = 5;
+        }
+
+        wrapper.appendChild(
+            label
+        );
+
+        wrapper.appendChild(
+            input
+        );
+
+        return {
+            wrapper,
+            input
+        };
+    }
+
+
+    // ============================================================
+    // SETTINGS
+    // ============================================================
+
+    function openSettings() {
+        const domain =
+            getDomain();
+
+        const existing =
+            document.getElementById(
+                'pmerger-settings'
+            );
+
+        if (existing) {
+            existing.remove();
+        }
+
+        const site =
+            getCurrentSite() || {
+                enabled: true,
+                chapterUrlPatterns: [],
+                chapterContainer: '',
+                paragraphSelector: '',
+                junkSelector: ''
+            };
+
+        const overlay =
+            document.createElement(
+                'div'
+            );
+
+        overlay.id =
+            'pmerger-settings';
+
+        Object.assign(
+            overlay.style,
+            {
+                position: 'fixed',
+                inset: '0',
+                zIndex: '2147483647',
+                background: 'rgba(0,0,0,.65)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '20px',
+                boxSizing: 'border-box'
+            }
+        );
+
+        const panel =
+            document.createElement(
+                'div'
+            );
+
+        Object.assign(
+            panel.style,
+            {
+                background: '#fff',
+                color: '#111',
+                width: 'min(700px, 100%)',
+                maxHeight: '90vh',
+                overflowY: 'auto',
+                padding: '20px',
+                borderRadius: '8px',
+                boxSizing: 'border-box',
+                fontFamily: 'Arial, sans-serif'
+            }
+        );
+
+        const title =
+            document.createElement(
+                'h2'
+            );
+
+        title.textContent =
+            `pMerger — ${domain}`;
+
+        title.style.marginTop =
+            '0';
+
+        panel.appendChild(
+            title
+        );
+
+
+        // --------------------------------------------------------
+        // Enabled
+        // --------------------------------------------------------
+
+        const enabledLabel =
+            document.createElement(
+                'label'
+            );
+
+        enabledLabel.style.display =
+            'block';
+
+        enabledLabel.style.marginBottom =
+            '14px';
+
+        const enabled =
+            document.createElement(
+                'input'
+            );
+
+        enabled.type =
+            'checkbox';
+
+        enabled.checked =
+            site.enabled !== false;
+
+        enabledLabel.appendChild(
+            enabled
+        );
+
+        enabledLabel.appendChild(
+            document.createTextNode(
+                ' Enable this site'
+            )
+        );
+
+        panel.appendChild(
+            enabledLabel
+        );
+
+
+        // --------------------------------------------------------
+        // URL patterns
+        // --------------------------------------------------------
+
+        const urlField =
+            createSettingsField(
+                'Chapter URL patterns (one per line)',
+                Array.isArray(
+                    site.chapterUrlPatterns
+                )
+                    ? site.chapterUrlPatterns.join(
+                        '\n'
+                    )
+                    : '',
+                'textarea'
+            );
+
+        panel.appendChild(
+            urlField.wrapper
+        );
+
+
+        // --------------------------------------------------------
+        // Chapter container
+        // --------------------------------------------------------
+
+        const containerField =
+            createSettingsField(
+                'Chapter container selector',
+                site.chapterContainer
+            );
+
+        panel.appendChild(
+            containerField.wrapper
+        );
+
+
+        // --------------------------------------------------------
+        // Paragraph selector
+        // --------------------------------------------------------
+
+        const paragraphField =
+            createSettingsField(
+                'Paragraph selector',
+                site.paragraphSelector
+            );
+
+        panel.appendChild(
+            paragraphField.wrapper
+        );
+
+
+        // --------------------------------------------------------
+        // Junk selector
+        // --------------------------------------------------------
+
+        const junkField =
+            createSettingsField(
+                'Junk selector (optional)',
+                site.junkSelector
+            );
+
+        panel.appendChild(
+            junkField.wrapper
+        );
+
+
+        // --------------------------------------------------------
+        // Information
+        // --------------------------------------------------------
+
+        const info =
+            document.createElement(
+                'div'
+            );
+
+        info.textContent =
+            'Scene breaks are converted to <hr>. ' +
+            'Navigation links are replaced with silent markers. ' +
+            'Two dialogue paragraphs directly beside each other ' +
+            'remain separated. Merged paragraphs are limited to 5 sentences.';
+
+        Object.assign(
+            info.style,
+            {
+                fontSize: '13px',
+                lineHeight: '1.4',
+                marginBottom: '16px',
+                padding: '10px',
+                background: '#eee'
+            }
+        );
+
+        panel.appendChild(
+            info
+        );
+
+
+        // --------------------------------------------------------
+        // Buttons
+        // --------------------------------------------------------
+
+        const buttons =
+            document.createElement(
+                'div'
+            );
+
+        Object.assign(
+            buttons.style,
+            {
+                display: 'flex',
+                gap: '8px',
+                justifyContent: 'flex-end'
+            }
+        );
+
+        const cancel =
+            document.createElement(
+                'button'
+            );
+
+        cancel.textContent =
+            'Cancel';
+
+        const save =
+            document.createElement(
+                'button'
+            );
+
+        save.textContent =
+            'Save';
+
+        buttons.appendChild(
+            cancel
+        );
+
+        buttons.appendChild(
+            save
+        );
+
+        panel.appendChild(
+            buttons
+        );
+
+
+        // --------------------------------------------------------
+        // Close
+        // --------------------------------------------------------
+
+        cancel.addEventListener(
+            'click',
+            () => {
+                overlay.remove();
+            }
+        );
+
+
+        // --------------------------------------------------------
+        // Save
+        // --------------------------------------------------------
+
+        save.addEventListener(
+            'click',
+            () => {
+                const form = {
+                    enabled,
+                    chapterUrlPatterns:
+                        urlField.input,
+                    chapterContainer:
+                        containerField.input,
+                    paragraphSelector:
+                        paragraphField.input,
+                    junkSelector:
+                        junkField.input
+                };
+
+                const newSite =
+                    getFormSettings(
+                        form
+                    );
+
+                config.sites[domain] =
+                    newSite;
+
+                saveConfig();
+
+                overlay.remove();
+
+                registerMenuCommands();
 
                 /*
-                 * Ignore mutations caused by the cleaner's
-                 * own removal/replacement of elements when
-                 * there are no newly added nodes.
+                 * Re-evaluate the current page
+                 * immediately after saving.
                  */
-                if (
-                    mutation.addedNodes.length === 0
-                ) {
-                    continue;
-                }
+                stopCleaner();
 
-                for (
-                    const node of mutation.addedNodes
+                if (
+                    config.globalEnabled
                 ) {
-                    handleAddedNode(node);
+                    startCleaner();
                 }
             }
+        );
+
+
+        // --------------------------------------------------------
+        // Mount
+        // --------------------------------------------------------
+
+        overlay.appendChild(
+            panel
+        );
+
+        document.body.appendChild(
+            overlay
+        );
+    }
+        // ============================================================
+    // DEFAULT SITE CONFIGS
+    // ============================================================
+
+    function addDefaultSite(
+        domain,
+        settings
+    ) {
+        if (
+            config.sites[domain] &&
+            typeof config.sites[domain] ===
+                'object'
+        ) {
+            return;
         }
-    );
 
-    observer.observe(
-        document.documentElement,
-        {
-            childList: true,
-            subtree: true
+        config.sites[domain] =
+            settings;
+    }
+
+
+    function loadDefaultSites() {
+        addDefaultSite(
+            'wtr-lab.com',
+            {
+                enabled: true,
+
+                chapterUrlPatterns: [
+                    '/en/novel/*/tts*'
+                ],
+
+                chapterContainer:
+                    'div.chapter-container',
+
+                paragraphSelector:
+                    'div.wtr-line',
+
+                junkSelector: ''
+            }
+        );
+
+        addDefaultSite(
+            'karistudio.com',
+            {
+                enabled: true,
+
+                chapterUrlPatterns: [
+                    '/chapter-*'
+                ],
+
+                chapterContainer:
+                    'article.small.single',
+
+                paragraphSelector:
+                    'p',
+
+                junkSelector: ''
+            }
+        );
+
+        addDefaultSite(
+            'dreamytranslations.com',
+            {
+                enabled: true,
+
+                chapterUrlPatterns: [
+                    '/novel/*/chapter/*'
+                ],
+
+                chapterContainer:
+                    'article.chapter-content',
+
+                paragraphSelector:
+                    'p.line',
+
+                junkSelector: ''
+            }
+        );
+
+        saveConfig();
+    }
+
+
+    // ============================================================
+    // STARTUP
+    // ============================================================
+
+    function initialize() {
+        loadConfig();
+
+        loadDefaultSites();
+
+        registerMenuCommands();
+
+        /*
+         * The master switch defaults to OFF.
+         * Nothing is automatically modified until
+         * the user turns pMerger ON.
+         */
+        if (
+            config.globalEnabled
+        ) {
+            startCleaner();
         }
-    );
-}
+    }
 
-  function saveSettings() {
-    const values =
-        getFormSettings();
 
-    const domain =
-        getDomain();
+    // ============================================================
+    // INITIALIZE
+    // ============================================================
 
     if (
-        !values.chapterUrlPatterns.length
+        document.readyState ===
+        'loading'
     ) {
-        showResult(
-            'Enter at least one chapter URL pattern.',
-            true
+        document.addEventListener(
+            'DOMContentLoaded',
+            initialize,
+            {
+                once: true
+            }
         );
-        return;
+    } else {
+        initialize();
     }
 
-    if (
-        !values.chapterContainer
-    ) {
-        showResult(
-            'Enter a chapter container selector.',
-            true
-        );
-        return;
-    }
-
-    if (
-        !values.paragraphSelector
-    ) {
-        showResult(
-            'Enter a paragraph selector.',
-            true
-        );
-        return;
-    }
-
-    // Validate all selectors.
-    try {
-        document.querySelectorAll(
-            values.chapterContainer
-        );
-
-        document.querySelectorAll(
-            values.paragraphSelector
-        );
-
-        if (values.junkSelector) {
-            document.querySelectorAll(
-                values.junkSelector
-            );
-        }
-    } catch {
-        showResult(
-            'One of the selectors is invalid.',
-            true
-        );
-        return;
-    }
-
-    config.sites[domain] =
-        values;
-
-    saveConfig();
-
-    showResult(
-        'Settings saved.'
-    );
-
-    if (config.globalEnabled) {
-        setTimeout(
-            scanPage,
-            100
-        );
-    }
-}
+})();
