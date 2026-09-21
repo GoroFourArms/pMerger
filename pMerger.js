@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.12
+// @version      1.1.13
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -71,53 +71,53 @@
     // ============================================================
     // MENU COMMANDS
     // ============================================================
-let applyMenuId = null;
-let undoMenuId = null;
-let toggleMenuId = null;
-let settingsMenuId = null;
 
-function registerMenuCommands() {
-    // Remove old menu commands.
-    for (const id of [
-        applyMenuId,
-        undoMenuId,
-        toggleMenuId,
-        settingsMenuId
-    ]) {
+    let toggleMenuId = null;
+    let settingsMenuId = null;
+
+    function registerMenuCommands() {
+        // Remove old toggle command if Tampermonkey supplied an ID.
         if (
-            id !== null &&
+            toggleMenuId !== null &&
             typeof GM_unregisterMenuCommand === 'function'
         ) {
             try {
-                GM_unregisterMenuCommand(id);
+                GM_unregisterMenuCommand(toggleMenuId);
             } catch {
                 // Ignore unsupported/invalid IDs.
             }
         }
+
+        if (
+            settingsMenuId !== null &&
+            typeof GM_unregisterMenuCommand === 'function'
+        ) {
+            try {
+                GM_unregisterMenuCommand(settingsMenuId);
+            } catch {
+                // Ignore unsupported/invalid IDs.
+            }
+        }
+GM_registerMenuCommand(
+    'pMerger: Apply',
+    applyCurrentPage
+);
+
+GM_registerMenuCommand(
+    'pMerger: Undo',
+    undoCurrentPage
+);
+        toggleMenuId = GM_registerMenuCommand(
+            `TTS Cleaner: ${config.globalEnabled ? 'ON' : 'OFF'}`,
+            toggleCleaner
+        );
+
+        settingsMenuId = GM_registerMenuCommand(
+            'TTS Cleaner — Settings',
+            openSettings
+        );
     }
 
-    applyMenuId = GM_registerMenuCommand(
-        'pMerger: Apply',
-        applyCurrentPage
-    );
-
-    undoMenuId = GM_registerMenuCommand(
-        'pMerger: Undo',
-        undoCurrentPage
-    );
-
-    toggleMenuId = GM_registerMenuCommand(
-        `TTS Cleaner: ${
-            config.globalEnabled ? 'ON' : 'OFF'
-        }`,
-        toggleCleaner
-    );
-
-    settingsMenuId = GM_registerMenuCommand(
-        'TTS Cleaner — Settings',
-        openSettings
-    );
-}
     function toggleCleaner() {
         config.globalEnabled = !config.globalEnabled;
         saveConfig();
@@ -345,7 +345,7 @@ function cleanNavigationElement(element) {
 
     return true;
 }
-	
+
 function looksLikeDialogue(element) {
     const text = textOf(element);
 
@@ -410,30 +410,13 @@ function saveOriginalChapter(container) {
 }
 
 function applyCurrentPage() {
+    if (!isChapterPage()) {
+        return;
+    }
+
     const site = getCurrentSite();
 
     if (!site) {
-        return;
-    }
-
-    if (!site.chapterContainer) {
-        return;
-    }
-
-    if (!site.paragraphSelector) {
-        return;
-    }
-
-    if (
-        !Array.isArray(site.chapterUrlPatterns) ||
-        site.chapterUrlPatterns.length === 0
-    ) {
-        return;
-    }
-
-    if (
-        !site.chapterUrlPatterns.some(matchesUrlPattern)
-    ) {
         return;
     }
 
@@ -465,7 +448,6 @@ function undoCurrentPage() {
 
     modifiedContainers.clear();
 }
-	
 function flattenParagraphWrappers(container, site) {
     const paragraphs = safeQueryAll(
         container,
@@ -497,7 +479,9 @@ function flattenParagraphWrappers(container, site) {
         return;
     }
 
-    for (const first of wrappers) {
+    for (let i = 0; i < wrappers.length; i++) {
+        const first = wrappers[i];
+
         if (!first.isConnected) {
             continue;
         }
@@ -535,12 +519,12 @@ function cleanChapter(container, site) {
     }
 
     if (processingContainers.has(container)) {
-    return;
-}
+        return;
+    }
 
-saveOriginalChapter(container);
+    saveOriginalChapter(container);
 
-processingContainers.add(container);
+    processingContainers.add(container);
 
     try {
         // --------------------------------------------------------
@@ -566,24 +550,22 @@ processingContainers.add(container);
             cleanNavigationElement(element);
         }
 
+        // --------------------------------------------------------
+        // Flatten paragraph wrappers
+        // --------------------------------------------------------
 
-// --------------------------------------------------------
-// Find paragraphs
-// --------------------------------------------------------
+        flattenParagraphWrappers(
+            container,
+            site
+        );
 
-flattenParagraphWrappers(
-    container,
-    site
-);
-
-let paragraphs = safeQueryAll(
-    container,
-    site.paragraphSelector
-);
-
+        let paragraphs = safeQueryAll(
+            container,
+            site.paragraphSelector
+        );
 
         // --------------------------------------------------------
-        // Convert scene-break paragraphs to <hr>
+        // Convert scene breaks to <hr>
         // --------------------------------------------------------
 
         for (const paragraph of paragraphs) {
@@ -600,8 +582,6 @@ let paragraphs = safeQueryAll(
             }
         }
 
-
-        // Get paragraphs again because some were replaced.
         paragraphs = safeQueryAll(
             container,
             site.paragraphSelector
@@ -611,413 +591,85 @@ let paragraphs = safeQueryAll(
             return;
         }
 
+        // --------------------------------------------------------
+        // Merge artificial paragraph breaks
+        // --------------------------------------------------------
 
-  // --------------------------------------------------------
-// Merge artificial paragraph breaks
-// --------------------------------------------------------
+        let current = paragraphs[0];
 
-let current = paragraphs[0];
+        let previousWasDialogue =
+            looksLikeDialogue(current);
 
-// Remember whether the previous ORIGINAL paragraph
-// was dialogue. This is important because `current`
-// may contain several merged paragraphs.
-let previousWasDialogue =
-    looksLikeDialogue(current);
-
-for (
-    let i = 1;
-    i < paragraphs.length;
-    i++
-) {
-    const next = paragraphs[i];
-
-    if (
-        !current.isConnected ||
-        !next.isConnected
-    ) {
-        if (next.isConnected) {
-            current = next;
-            previousWasDialogue =
-                looksLikeDialogue(next);
-        }
-
-        continue;
-    }
-
-    if (!areAdjacent(current, next)) {
-        current = next;
-        previousWasDialogue =
-            looksLikeDialogue(next);
-
-        continue;
-    }
-
-    const nextIsDialogue =
-        looksLikeDialogue(next);
-
-    // Keep a break only when TWO dialogue paragraphs
-    // are directly back-to-back.
-    if (
-        previousWasDialogue &&
-        nextIsDialogue
-    ) {
-        current = next;
-        previousWasDialogue = nextIsDialogue;
-        continue;
-    }
-
-    const combinedText =
-        (current.textContent || '') +
-        ' ' +
-        (next.textContent || '');
-
-    // Maximum 5 sentences per <p>.
-    if (
-        countSentences(combinedText) >
-        MAX_MERGED_SENTENCES
-    ) {
-        current = next;
-        previousWasDialogue = nextIsDialogue;
-        continue;
-    }
-
-    appendWithSpace(
-        current,
-        next
-    );
-
-    // IMPORTANT:
-    // Track the dialogue status of the ORIGINAL
-    // paragraph we just consumed, not the merged text.
-    previousWasDialogue = nextIsDialogue;
-}
-
-    // ============================================================
-    // CONTAINER PROCESSING
-    // ============================================================
-
-    const processingContainers = new WeakSet();
-
-    /*
-     * Used only for debouncing changes inside existing chapters.
-     */
-    const pendingChapterTimers = new WeakMap();
-
-    function processContainer(container) {
-        if (!config.globalEnabled) {
-            return;
-        }
-
-        if (!isChapterPage()) {
-            return;
-        }
-
-        const site = getCurrentSite();
-
-        if (!site) {
-            return;
-        }
-
-        cleanChapter(container, site);
-    }
-
-    function scheduleContainer(container, delay = 75) {
-        if (!container || !container.isConnected) {
-            return;
-        }
-
-        const oldTimer = pendingChapterTimers.get(container);
-
-        if (oldTimer) {
-            clearTimeout(oldTimer);
-        }
-
-        const timer = setTimeout(() => {
-            pendingChapterTimers.delete(container);
+        for (
+            let i = 1;
+            i < paragraphs.length;
+            i++
+        ) {
+            const next = paragraphs[i];
 
             if (
-                config.globalEnabled &&
-                container.isConnected &&
-                isChapterPage()
+                !current.isConnected ||
+                !next.isConnected
             ) {
-                processContainer(container);
+                if (next.isConnected) {
+                    current = next;
+                    previousWasDialogue =
+                        looksLikeDialogue(next);
+                }
+
+                continue;
             }
-        }, delay);
 
-        pendingChapterTimers.set(
-            container,
-            timer
-        );
-    }
+            if (!areAdjacent(current, next)) {
+                current = next;
+                previousWasDialogue =
+                    looksLikeDialogue(next);
 
-    function scanPage() {
-        if (!config.globalEnabled) {
-            return;
-        }
+                continue;
+            }
 
-        if (!isChapterPage()) {
-            return;
-        }
+            const nextIsDialogue =
+                looksLikeDialogue(next);
 
-        const site = getCurrentSite();
+            // Keep a break only when two dialogue
+            // paragraphs are directly back-to-back.
+            if (
+                previousWasDialogue &&
+                nextIsDialogue
+            ) {
+                current = next;
+                previousWasDialogue = nextIsDialogue;
+                continue;
+            }
 
-        if (!site) {
-            return;
-        }
+            const combinedText =
+                (current.textContent || '') +
+                ' ' +
+                (next.textContent || '');
 
-        const containers = findChapterContainers(
-            document,
-            site.chapterContainer
-        );
+            // Maximum 5 sentences per <p>.
+            if (
+                countSentences(combinedText) >
+                MAX_MERGED_SENTENCES
+            ) {
+                current = next;
+                previousWasDialogue = nextIsDialogue;
+                continue;
+            }
 
-        for (const container of containers) {
-            processContainer(container);
-        }
-    }
-
-
-    // ============================================================
-    // PAGETUAL / MUTATION OBSERVER
-    // ============================================================
-
-    let observer = null;
-
-    function handleAddedNode(node) {
-        if (
-            !node ||
-            node.nodeType !== Node.ELEMENT_NODE
-        ) {
-            return;
-        }
-
-        if (!config.globalEnabled) {
-            return;
-        }
-
-        if (!isChapterPage()) {
-            return;
-        }
-
-        const site = getCurrentSite();
-
-        if (!site) {
-            return;
-        }
-
-        /*
-         * Case 1:
-         * Pagetual appended an entirely new chapter container.
-         */
-        const newContainers = findChapterContainers(
-            node,
-            site.chapterContainer
-        );
-
-        for (const container of newContainers) {
-            /*
-             * Wait briefly so Pagetual can finish inserting
-             * the chapter contents before we merge anything.
-             */
-            scheduleContainer(container, 75);
-        }
-
-        /*
-         * Case 2:
-         * New paragraphs/content were added inside an
-         * already-existing chapter.
-         */
-        let parentChapter = null;
-
-        if (
-            elementMatches(
-                node,
-                site.chapterContainer
-            )
-        ) {
-            parentChapter = node;
-        } else {
-            parentChapter = closestChapter(
-                node,
-                site.chapterContainer
+            appendWithSpace(
+                current,
+                next
             );
+
+            previousWasDialogue = nextIsDialogue;
         }
-
-        if (parentChapter) {
-            scheduleContainer(
-                parentChapter,
-                100
-            );
-        }
+    } finally {
+        processingContainers.delete(container);
     }
-
-    function startObserver() {
-        if (observer) {
-            return;
-        }
-
-        if (!document.documentElement) {
-            return;
-        }
-
-        observer = new MutationObserver(
-            mutations => {
-                if (!config.globalEnabled) {
-                    return;
-                }
-
-                if (!isChapterPage()) {
-                    return;
-                }
-
-                const site = getCurrentSite();
-
-                if (!site) {
-                    return;
-                }
-
-                for (const mutation of mutations) {
-
-                    /*
-                     * If the mutation target is itself a paragraph,
-                     * it is probably the cleaner moving text/nodes
-                     * inside an existing paragraph.
-                     *
-                     * Ignore it to prevent observer feedback loops.
-                     */
-                    if (
-                        mutation.target &&
-                        mutation.target.nodeType ===
-                            Node.ELEMENT_NODE &&
-                        elementMatches(
-                            mutation.target,
-                            site.paragraphSelector
-                        )
-                    ) {
-                        continue;
-                    }
-
-                    for (
-                        const node of mutation.addedNodes
-                    ) {
-                        handleAddedNode(node);
-                    }
-                }
-            }
-        );
-
-        observer.observe(
-            document.documentElement,
-            {
-                childList: true,
-                subtree: true
-            }
-        );
-    }
-
-    function stopObserver() {
-        if (!observer) {
-            return;
-        }
-
-        observer.disconnect();
-        observer = null;
-    }
-
-
-    // ============================================================
-    // SPA URL WATCHER
-    // ============================================================
-
-    let urlWatcher = null;
-    let lastUrl = location.href;
-
-    function startUrlWatcher() {
-        if (urlWatcher) {
-            return;
-        }
-
-        urlWatcher = setInterval(() => {
-            if (location.href === lastUrl) {
-                return;
-            }
-
-            lastUrl = location.href;
-
-            if (!config.globalEnabled) {
-                return;
-            }
-
-            /*
-             * Give the SPA a moment to replace the chapter.
-             */
-            setTimeout(() => {
-                scanPage();
-            }, 150);
-
-        }, 750);
-    }
-
-    function stopUrlWatcher() {
-        if (!urlWatcher) {
-            return;
-        }
-
-        clearInterval(urlWatcher);
-        urlWatcher = null;
-    }
-
-
-    // ============================================================
-    // START / STOP
-    // ============================================================
-
-    function startCleaner() {
-        if (!config.globalEnabled) {
-            return;
-        }
-
-        startObserver();
-        startUrlWatcher();
-
-        setTimeout(() => {
-            scanPage();
-        }, 100);
-    }
-
-    function stopCleaner() {
-        stopObserver();
-        stopUrlWatcher();
-
-        /*
-         * Cancel pending chapter timers.
-         *
-         * WeakMap itself cannot be iterated, so timers will simply
-         * check config.globalEnabled before doing anything.
-         */
-    }
-
-
-    // ============================================================
-    // SETTINGS UI
-    // ============================================================
-
-    let settingsWindow = null;
-
-    function escapeHtml(value) {
-        return String(value ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
-	
-function injectStyles() {
-    if (
-        document.getElementById(
-            'tts-cleaner-styles'
-        )
-    ) {
+}
+function startObserver() {
+    if (observer) {
         return;
     }
 
@@ -1025,686 +677,141 @@ function injectStyles() {
         return;
     }
 
-    const style =
-        document.createElement('style');
-
-    style.id = 'tts-cleaner-styles';
-
-    style.textContent = `
-        .tts-cleaner-overlay {
-            position: fixed;
-            inset: 0;
-            z-index: 2147483647;
-            background: rgba(0,0,0,.75);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-            box-sizing: border-box;
-            font-family: system-ui, sans-serif;
-        }
-
-        .tts-cleaner-window {
-            width: min(620px, 100%);
-            max-height: 90vh;
-            overflow-y: auto;
-            background: #1e1e1e !important;
-            color: #eeeeee !important;
-            border-radius: 10px;
-            box-shadow: 0 20px 60px rgba(0,0,0,.7);
-        }
-
-        .tts-cleaner-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 16px 18px;
-            border-bottom: 1px solid #444;
-        }
-
-        .tts-cleaner-title {
-            font-size: 19px;
-            font-weight: 700;
-            color: #ffffff !important;
-        }
-
-        .tts-cleaner-domain {
-            color: #aaaaaa !important;
-            font-size: 13px;
-            margin-top: 3px;
-        }
-
-        .tts-cleaner-close {
-            border: 0;
-            background: none !important;
-            color: #ffffff !important;
-            font-size: 28px;
-            cursor: pointer;
-            line-height: 1;
-        }
-
-        .tts-cleaner-body {
-            padding: 18px;
-        }
-
-        .tts-cleaner-body label {
-            display: block;
-            margin-top: 16px;
-            font-weight: 600;
-            color: #eeeeee !important;
-        }
-
-        .tts-cleaner-body input,
-        .tts-cleaner-body textarea {
-            box-sizing: border-box;
-            width: 100%;
-            margin-top: 6px;
-            padding: 9px;
-            background: #2b2b2b !important;
-            color: #ffffff !important;
-            border: 1px solid #555 !important;
-            border-radius: 6px;
-            font: inherit;
-        }
-
-        .tts-cleaner-body input::placeholder,
-        .tts-cleaner-body textarea::placeholder {
-            color: #888 !important;
-        }
-
-        .tts-check {
-            display: flex !important;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .tts-check input {
-            width: auto;
-            margin: 0;
-        }
-
-        .tts-help {
-            margin-top: 6px;
-            color: #999 !important;
-            font-size: 12px;
-            font-weight: normal;
-        }
-
-        .tts-message {
-            padding: 10px;
-            background: #292929 !important;
-            color: #dddddd !important;
-            border-radius: 6px;
-            margin-bottom: 12px;
-        }
-
-        .tts-buttons {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 20px;
-        }
-
-        .tts-buttons button {
-            padding: 8px 13px;
-            border: 1px solid #555 !important;
-            border-radius: 6px;
-            cursor: pointer;
-            background: #333333 !important;
-            color: #ffffff !important;
-        }
-
-        .tts-buttons button:hover {
-            background: #444444 !important;
-        }
-
-        .tts-buttons .primary {
-            background: #555555 !important;
-            color: #ffffff !important;
-            border-color: #777 !important;
-        }
-
-        .tts-buttons .primary:hover {
-            background: #666666 !important;
-        }
-
-        .tts-result {
-            margin-top: 12px;
-            color: #7ee787 !important;
-            min-height: 18px;
-        }
-
-        .tts-error {
-            color: #ff7b72 !important;
-        }
-    `;
-
-    document.documentElement.appendChild(style);
-}
-
-
-    // ============================================================
-    // OPEN SETTINGS
-    // ============================================================
-
-    function openSettings() {
-        if (!document.documentElement) {
-            return;
-        }
-
-        injectStyles();
-
-        if (settingsWindow) {
-            settingsWindow.remove();
-            settingsWindow = null;
-        }
-
-        const domain = getDomain();
-        const site = getCurrentSite();
-
-        settingsWindow =
-            document.createElement('div');
-
-        settingsWindow.className =
-            'tts-cleaner-overlay';
-
-        settingsWindow.innerHTML = `
-            <div class="tts-cleaner-window">
-
-                <div class="tts-cleaner-header">
-                    <div>
-                        <div class="tts-cleaner-title">
-                            TTS Cleaner
-                        </div>
-
-                        <div class="tts-cleaner-domain">
-                            ${escapeHtml(domain)}
-                        </div>
-                    </div>
-
-                    <button
-                        class="tts-cleaner-close"
-                        data-action="close">
-                        ×
-                    </button>
-                </div>
-
-                <div class="tts-cleaner-body">
-
-                    ${
-                        site
-                            ? `
-                                <div class="tts-message">
-                                    This site has saved settings.
-                                </div>
-                            `
-                            : `
-                                <div class="tts-message">
-                                    No settings for this site yet.
-                                </div>
-                            `
-                    }
-
-                    <label>
-                        Chapter URL pattern(s)
-
-                        <textarea
-                            id="tts-url-patterns"
-                            rows="3"
-                            placeholder="/chapter/*"
-                        >${escapeHtml(
-                            site?.chapterUrlPatterns
-                                ?.join('\n') || ''
-                        )}</textarea>
-
-                        <div class="tts-help">
-                            One pattern per line.
-                            Use * as a wildcard.
-                            Example: /chapter/*
-                        </div>
-                    </label>
-
-                    <label>
-                        Chapter container selector
-
-                        <input
-                            id="tts-chapter-selector"
-                            value="${escapeHtml(
-                                site?.chapterContainer || ''
-                            )}"
-                            placeholder="article.chapter"
-                        >
-                    </label>
-
-                    <label>
-                        Paragraph selector
-
-                        <input
-                            id="tts-paragraph-selector"
-                            value="${escapeHtml(
-                                site?.paragraphSelector || ''
-                            )}"
-                            placeholder="p"
-                        >
-                    </label>
-
-                    <label>
-                        Junk selector
-
-                        <input
-                            id="tts-junk-selector"
-                            value="${escapeHtml(
-                                site?.junkSelector || ''
-                            )}"
-                            placeholder=".ad, .ads, .advertisement"
-                        >
-
-                        <div class="tts-help">
-                            Optional. Elements matching this selector
-                            will be removed before merging.
-                        </div>
-                    </label>
-					
-                    <div
-                        id="tts-result"
-                        class="tts-result">
-                    </div>
-
-                    <div class="tts-buttons">
-
-                        <button
-                            class="primary"
-                            data-action="test">
-                            Test
-                        </button>
-
-                        <button
-                            class="primary"
-                            data-action="save">
-                            ${site ? 'Save' : 'Add site'}
-                        </button>
-
-                        ${
-                            site
-                                ? `
-                                    <button
-                                        data-action="delete">
-                                        Delete
-                                    </button>
-                                `
-                                : ''
-                        }
-
-                        <button data-action="close">
-                            Close
-                        </button>
-
-                    </div>
-
-                </div>
-            </div>
-        `;
-
-        document.documentElement.appendChild(
-            settingsWindow
-        );
-
-        settingsWindow.addEventListener(
-            'click',
-            event => {
-                const actionElement =
-                    event.target.closest(
-                        '[data-action]'
-                    );
-
-                if (!actionElement) {
-                    return;
-                }
-
-                const action =
-                    actionElement.dataset.action;
-
-                if (action === 'close') {
-                    closeSettings();
-                }
-
-                if (action === 'test') {
-                    testSettings();
-                }
-
-                if (action === 'save') {
-                    saveSettings();
-                }
-
-                if (action === 'delete') {
-                    deleteSettings();
-                }
+    observer = new MutationObserver(
+        mutations => {
+            if (!config.globalEnabled) {
+                return;
             }
-        );
 
-        settingsWindow.addEventListener(
-            'click',
-            event => {
+            if (!isChapterPage()) {
+                return;
+            }
+
+            const site = getCurrentSite();
+
+            if (!site) {
+                return;
+            }
+
+            for (const mutation of mutations) {
+                /*
+                 * Ignore mutations made inside paragraphs.
+                 * This prevents the cleaner from reacting to
+                 * its own text merging.
+                 */
                 if (
-                    event.target === settingsWindow
+                    mutation.target &&
+                    mutation.target.nodeType ===
+                        Node.ELEMENT_NODE &&
+                    elementMatches(
+                        mutation.target,
+                        site.paragraphSelector
+                    )
                 ) {
-                    closeSettings();
+                    continue;
+                }
+
+                /*
+                 * Ignore mutations caused by the cleaner's
+                 * own removal/replacement of elements when
+                 * there are no newly added nodes.
+                 */
+                if (
+                    mutation.addedNodes.length === 0
+                ) {
+                    continue;
+                }
+
+                for (
+                    const node of mutation.addedNodes
+                ) {
+                    handleAddedNode(node);
                 }
             }
-        );
-    }
+        }
+    );
 
+    observer.observe(
+        document.documentElement,
+        {
+            childList: true,
+            subtree: true
+        }
+    );
+}
+  function saveSettings() {
+    const values =
+        getFormSettings();
 
-    // ============================================================
-    // SETTINGS FORM
-    // ============================================================
+    const domain =
+        getDomain();
 
-    function getFormSettings() {
-        const patterns =
-            document
-                .getElementById(
-                    'tts-url-patterns'
-                )
-                ?.value
-                .split('\n')
-                .map(x => x.trim())
-                .filter(Boolean) || [];
-
-return {
-    enabled:
-        document
-            .getElementById(
-                'tts-site-enabled'
-            )
-            ?.checked ?? true,
-
-    chapterUrlPatterns:
-        patterns,
-
-    chapterContainer:
-        document
-            .getElementById(
-                'tts-chapter-selector'
-            )
-            ?.value
-            .trim() || '',
-	
-    paragraphSelector:
-        document
-            .getElementById(
-                'tts-paragraph-selector'
-            )
-            ?.value
-            .trim() || '',
-
-    junkSelector:
-        document
-            .getElementById(
-                'tts-junk-selector'
-            )
-            ?.value
-            .trim() || ''
-};
-    }
-
-    function showResult(
-        message,
-        error = false
+    if (
+        !values.chapterUrlPatterns.length
     ) {
-        const result =
-            document.getElementById(
-                'tts-result'
-            );
-
-        if (!result) {
-            return;
-        }
-
-        result.textContent = message;
-
-        result.classList.toggle(
-            'tts-error',
-            error
-        );
-    }
-
-
-    // ============================================================
-    // TEST SETTINGS
-    // ============================================================
-
-    function testSettings() {
-        const values =
-            getFormSettings();
-
-        if (
-            !values.chapterContainer
-        ) {
-            showResult(
-                'Enter a chapter container selector.',
-                true
-            );
-            return;
-        }
-
-        if (
-            !values.paragraphSelector
-        ) {
-            showResult(
-                'Enter a paragraph selector.',
-                true
-            );
-            return;
-        }
-
-        let containers;
-
-        try {
-            containers =
-                document.querySelectorAll(
-                    values.chapterContainer
-                );
-        } catch {
-            showResult(
-                'Invalid chapter container selector.',
-                true
-            );
-            return;
-        }
-
-        let paragraphCount = 0;
-        let junkCount = 0;
-
-        try {
-            for (
-                const container of containers
-            ) {
-                paragraphCount +=
-                    container.querySelectorAll(
-                        values.paragraphSelector
-                    ).length;
-
-                if (values.junkSelector) {
-                    junkCount +=
-                        container.querySelectorAll(
-                            values.junkSelector
-                        ).length;
-                }
-            }
-        } catch {
-            showResult(
-                'Invalid paragraph selector.',
-                true
-            );
-            return;
-        }
-
         showResult(
-            `Found ${containers.length} chapter ` +
-            `container(s), ${paragraphCount} ` +
-            `paragraph(s), and ${junkCount} ` +
-            `junk element(s).`
+            'Enter at least one chapter URL pattern.',
+            true
         );
-    }
-
-
-    // ============================================================
-    // SAVE SETTINGS
-    // ============================================================
-
-    function saveSettings() {
-        const values =
-            getFormSettings();
-
-        const domain =
-            getDomain();
-
-        if (
-            !values.chapterUrlPatterns.length
-        ) {
-            showResult(
-                'Enter at least one chapter URL pattern.',
-                true
-            );
-            return;
-        }
-
-        if (
-            !values.chapterContainer
-        ) {
-            showResult(
-                'Enter a chapter container selector.',
-                true
-            );
-            return;
-        }
-
-        if (
-            !values.paragraphSelector
-        ) {
-            showResult(
-                'Enter a paragraph selector.',
-                true
-            );
-            return;
-        }
-
-        // Validate all selectors.
-        try {
-            document.querySelectorAll(
-                values.chapterContainer
-            );
-
-            document.querySelectorAll(
-                values.paragraphSelector
-            );
-
-            if (values.junkSelector) {
-                document.querySelectorAll(
-                    values.junkSelector
-                );
-            }
-        } catch {
-            showResult(
-                'One of the selectors is invalid.',
-                true
-            );
-            return;
-        }
-
-        config.sites[domain] =
-            values;
-
-        saveConfig();
-
-        showResult(
-            'Settings saved.'
-        );
-
-        if (config.globalEnabled) {
-            setTimeout(
-                scanPage,
-                100
-            );
-        }
-    }
-
-
-    // ============================================================
-    // DELETE SETTINGS
-    // ============================================================
-
-    function deleteSettings() {
-        const domain =
-            getDomain();
-
-        if (!config.sites[domain]) {
-            closeSettings();
-            return;
-        }
-
-        if (
-            !confirm(
-                `Delete TTS Cleaner settings for ${domain}?`
-            )
-        ) {
-            return;
-        }
-
-        delete config.sites[domain];
-
-        saveConfig();
-
-        closeSettings();
-
-        /*
-         * Stop the observer if the current page no longer
-         * has a configured site.
-         */
-        if (
-            config.globalEnabled
-        ) {
-            if (!getCurrentSite()) {
-                stopCleaner();
-            }
-        }
-    }
-
-
-    // ============================================================
-    // CLOSE SETTINGS
-    // ============================================================
-
-    function closeSettings() {
-        if (!settingsWindow) {
-            return;
-        }
-
-        settingsWindow.remove();
-        settingsWindow = null;
-    }
-
-
-    // ============================================================
-    // INITIALIZATION
-    // ============================================================
-
-    function initialize() {
-        if (config.globalEnabled) {
-            startCleaner();
-        }
+        return;
     }
 
     if (
-        document.readyState === 'loading'
+        !values.chapterContainer
     ) {
-        document.addEventListener(
-            'DOMContentLoaded',
-            initialize,
-            { once: true }
+        showResult(
+            'Enter a chapter container selector.',
+            true
         );
-    } else {
-        initialize();
+        return;
     }
 
-})();
+    if (
+        !values.paragraphSelector
+    ) {
+        showResult(
+            'Enter a paragraph selector.',
+            true
+        );
+        return;
+    }
+
+    // Validate all selectors.
+    try {
+        document.querySelectorAll(
+            values.chapterContainer
+        );
+
+        document.querySelectorAll(
+            values.paragraphSelector
+        );
+
+        if (values.junkSelector) {
+            document.querySelectorAll(
+                values.junkSelector
+            );
+        }
+    } catch {
+        showResult(
+            'One of the selectors is invalid.',
+            true
+        );
+        return;
+    }
+
+    config.sites[domain] =
+        values;
+
+    saveConfig();
+
+    showResult(
+        'Settings saved.'
+    );
+
+    if (config.globalEnabled) {
+        setTimeout(
+            scanPage,
+            100
+        );
+    }
+}
