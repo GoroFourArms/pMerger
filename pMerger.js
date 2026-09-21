@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.8
+// @version      1.1.9
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -24,6 +24,7 @@
     const STORAGE_KEY = 'ttsCleanerConfig';
 	const originalChapterHTML = new WeakMap();
 	const modifiedContainers = new Set();
+  const MAX_MERGED_SENTENCES = 5;
     const DEFAULT_CONFIG = {
         globalEnabled: false,
         sites: {}
@@ -272,7 +273,16 @@ GM_registerMenuCommand(
             .replace(/\s+/g, ' ')
             .trim();
     }
-    
+    function countSentences(text) {
+    if (!text) {
+        return 0;
+    }
+
+    const matches =
+        text.match(/[.!?]+(?=\s|$)/g);
+
+    return matches ? matches.length : 0;
+}
 function looksLikeSceneBreak(text) {
     return (
         /^~{2,}$/.test(text) ||
@@ -299,9 +309,11 @@ function getNavigationReplacement(element) {
         return '<~~';
     }
 
-    if (/^(?:toc|contents|table\s+of\s+contents)$/i.test(text)) {
-        return '~~|~~';
-    }
+if (
+    /^(?:toc|contents|table\s+of\s+contents|index)$/i.test(text)
+) {
+    return '~~|~~';
+}
 
     return null;
 }
@@ -318,37 +330,35 @@ function cleanNavigationElement(element) {
 
     return true;
 }
-    function looksLikeDialogue(element) {
-        const text = textOf(element);
+	
+function looksLikeStandaloneDialogue(element) {
+    const text = textOf(element);
 
-        if (!text) {
-            return false;
-        }
-
-        return (
-            /^["“‘「『]/.test(text) ||
-            /^[—–]\s*\S/.test(text)
-        );
-    }
-
-function shouldPreserveBreak(first, second, site) {
-    if (
-        site.preserveDialogue === false
-    ) {
+    if (!text) {
         return false;
     }
 
-    /*
-     * Preserve a paragraph if the NEW paragraph
-     * appears to begin dialogue.
-     */
-    if (looksLikeDialogue(second)) {
+    // Quoted dialogue with nothing else around it.
+    if (
+        /^["“‘「『].+["”’」』]$/.test(text)
+    ) {
+        return true;
+    }
+
+    // Standalone em-dash dialogue.
+    if (
+        /^[—–]\s*\S/.test(text) &&
+        !/[.!?]["”’」』]?\s+\w+\s+(?:said|asked|replied|shouted|whispered)\b/i.test(text)
+    ) {
         return true;
     }
 
     return false;
 }
 
+function shouldPreserveBreak(first, second, site) {
+    return looksLikeStandaloneDialogue(second);
+}
 
     // ============================================================
     // PARAGRAPH MERGING
@@ -565,10 +575,23 @@ processingContainers.add(container);
                 continue;
             }
 
-            appendWithSpace(
-                current,
-                next
-            );
+const combinedText =
+    (current.textContent || '') +
+    ' ' +
+    (next.textContent || '');
+
+if (
+    countSentences(combinedText) >
+    MAX_MERGED_SENTENCES
+) {
+    current = next;
+    continue;
+}
+
+appendWithSpace(
+    current,
+    next
+);
         }
 
     } finally {
@@ -1129,19 +1152,6 @@ function injectStyles() {
                             `
                     }
 
-                    <label class="tts-check">
-                        <input
-                            id="tts-site-enabled"
-                            type="checkbox"
-                            ${
-                                site?.enabled !== false
-                                    ? 'checked'
-                                    : ''
-                            }
-                        >
-                        Enable cleaner for this site
-                    </label>
-
                     <label>
                         Chapter URL pattern(s)
 
@@ -1184,20 +1194,7 @@ function injectStyles() {
                             placeholder="p"
                         >
                     </label>
-
-                    <label class="tts-check">
-                        <input
-                            id="tts-preserve-dialogue"
-                            type="checkbox"
-                            ${
-                                site?.preserveDialogue === true
-                                    ? 'checked'
-                                    : ''
-                            }
-                        >
-                        Preserve dialogue paragraph breaks
-                    </label>
-
+					
                     <div
                         id="tts-result"
                         class="tts-result">
@@ -1303,40 +1300,33 @@ function injectStyles() {
                 .map(x => x.trim())
                 .filter(Boolean) || [];
 
-        return {
-            enabled:
-                document
-                    .getElementById(
-                        'tts-site-enabled'
-                    )
-                    ?.checked ?? true,
+return {
+    enabled:
+        document
+            .getElementById(
+                'tts-site-enabled'
+            )
+            ?.checked ?? true,
 
-            chapterUrlPatterns:
-                patterns,
+    chapterUrlPatterns:
+        patterns,
 
-            chapterContainer:
-                document
-                    .getElementById(
-                        'tts-chapter-selector'
-                    )
-                    ?.value
-                    .trim() || '',
+    chapterContainer:
+        document
+            .getElementById(
+                'tts-chapter-selector'
+            )
+            ?.value
+            .trim() || '',
 
-            paragraphSelector:
-                document
-                    .getElementById(
-                        'tts-paragraph-selector'
-                    )
-                    ?.value
-                    .trim() || '',
-
-          preserveDialogue:
-    document
-        .getElementById(
-            'tts-preserve-dialogue'
-        )
-        ?.checked ?? false
-        };
+    paragraphSelector:
+        document
+            .getElementById(
+                'tts-paragraph-selector'
+            )
+            ?.value
+            .trim() || ''
+};
     }
 
     function showResult(
