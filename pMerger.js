@@ -22,9 +22,10 @@
     // ============================================================
 
     const STORAGE_KEY = 'ttsCleanerConfig';
-	const originalChapterHTML = new WeakMap();
-	const modifiedContainers = new Set();
-  const MAX_MERGED_SENTENCES = 5;
+    const processingContainers = new WeakSet();
+  	const originalChapterHTML = new WeakMap();
+  	const modifiedContainers = new Set();
+    const MAX_MERGED_SENTENCES = 5;
     const DEFAULT_CONFIG = {
         globalEnabled: false,
         sites: {}
@@ -72,51 +73,53 @@
     // MENU COMMANDS
     // ============================================================
 
-    let toggleMenuId = null;
-    let settingsMenuId = null;
+      let applyMenuId = null;
+      let undoMenuId = null;
+      let toggleMenuId = null;
+      let settingsMenuId = null;
+     let observer = null;
 
-    function registerMenuCommands() {
-        // Remove old toggle command if Tampermonkey supplied an ID.
+function registerMenuCommands() {
+    for (const id of [
+        applyMenuId,
+        undoMenuId,
+        toggleMenuId,
+        settingsMenuId
+    ]) {
         if (
-            toggleMenuId !== null &&
+            id !== null &&
             typeof GM_unregisterMenuCommand === 'function'
         ) {
             try {
-                GM_unregisterMenuCommand(toggleMenuId);
+                GM_unregisterMenuCommand(id);
             } catch {
                 // Ignore unsupported/invalid IDs.
             }
         }
-
-        if (
-            settingsMenuId !== null &&
-            typeof GM_unregisterMenuCommand === 'function'
-        ) {
-            try {
-                GM_unregisterMenuCommand(settingsMenuId);
-            } catch {
-                // Ignore unsupported/invalid IDs.
-            }
-        }
-GM_registerMenuCommand(
-    'pMerger: Apply',
-    applyCurrentPage
-);
-
-GM_registerMenuCommand(
-    'pMerger: Undo',
-    undoCurrentPage
-);
-        toggleMenuId = GM_registerMenuCommand(
-            `TTS Cleaner: ${config.globalEnabled ? 'ON' : 'OFF'}`,
-            toggleCleaner
-        );
-
-        settingsMenuId = GM_registerMenuCommand(
-            'TTS Cleaner — Settings',
-            openSettings
-        );
     }
+
+    applyMenuId = GM_registerMenuCommand(
+        'pMerger: Apply',
+        applyCurrentPage
+    );
+
+    undoMenuId = GM_registerMenuCommand(
+        'pMerger: Undo',
+        undoCurrentPage
+    );
+
+    toggleMenuId = GM_registerMenuCommand(
+        `TTS Cleaner: ${
+            config.globalEnabled ? 'ON' : 'OFF'
+        }`,
+        toggleCleaner
+    );
+
+    settingsMenuId = GM_registerMenuCommand(
+        'TTS Cleaner — Settings',
+        openSettings
+    );
+}
 
     function toggleCleaner() {
         config.globalEnabled = !config.globalEnabled;
@@ -408,15 +411,31 @@ function saveOriginalChapter(container) {
         modifiedContainers.add(container);
     }
 }
-
 function applyCurrentPage() {
-    if (!isChapterPage()) {
-        return;
-    }
-
     const site = getCurrentSite();
 
     if (!site) {
+        return;
+    }
+
+    if (!site.chapterContainer) {
+        return;
+    }
+
+    if (!site.paragraphSelector) {
+        return;
+    }
+
+    if (
+        !Array.isArray(site.chapterUrlPatterns) ||
+        site.chapterUrlPatterns.length === 0
+    ) {
+        return;
+    }
+
+    if (
+        !site.chapterUrlPatterns.some(matchesUrlPattern)
+    ) {
         return;
     }
 
@@ -430,8 +449,13 @@ function applyCurrentPage() {
         cleanChapter(container, site);
     }
 }
-
 function undoCurrentPage() {
+    const wasObserving = observer !== null;
+
+    if (wasObserving) {
+        stopObserver();
+    }
+
     for (const container of modifiedContainers) {
         const original =
             originalChapterHTML.get(container);
@@ -447,6 +471,64 @@ function undoCurrentPage() {
     }
 
     modifiedContainers.clear();
+
+    if (wasObserving && config.globalEnabled) {
+        startObserver();
+    }
+}
+  function handleAddedNode(node) {
+    if (
+        !node ||
+        node.nodeType !== Node.ELEMENT_NODE
+    ) {
+        return;
+    }
+
+    if (!config.globalEnabled) {
+        return;
+    }
+
+    if (!isChapterPage()) {
+        return;
+    }
+
+    const site = getCurrentSite();
+
+    if (!site) {
+        return;
+    }
+
+    const newContainers = findChapterContainers(
+        node,
+        site.chapterContainer
+    );
+
+    for (const container of newContainers) {
+        scheduleContainer(container, 75);
+    }
+
+    let parentChapter = null;
+
+    if (
+        elementMatches(
+            node,
+            site.chapterContainer
+        )
+    ) {
+        parentChapter = node;
+    } else {
+        parentChapter = closestChapter(
+            node,
+            site.chapterContainer
+        );
+    }
+
+    if (parentChapter) {
+        scheduleContainer(
+            parentChapter,
+            100
+        );
+    }
 }
 function flattenParagraphWrappers(container, site) {
     const paragraphs = safeQueryAll(
@@ -739,6 +821,7 @@ function startObserver() {
         }
     );
 }
+
   function saveSettings() {
     const values =
         getFormSettings();
