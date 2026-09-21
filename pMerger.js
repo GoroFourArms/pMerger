@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.9
+// @version      1.1.11
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -293,7 +293,22 @@ function looksLikeSceneBreak(text) {
         /^·{2,}$/.test(text)
     );
 }
+function removeJunk(container, site) {
+    if (!site.junkSelector) {
+        return;
+    }
 
+    const junk = safeQueryAll(
+        container,
+        site.junkSelector
+    );
+
+    for (const element of junk) {
+        if (element.isConnected) {
+            element.remove();
+        }
+    }
+}
 function getNavigationReplacement(element) {
     if (!element) {
         return null;
@@ -331,82 +346,58 @@ function cleanNavigationElement(element) {
     return true;
 }
 	
-function looksLikeStandaloneDialogue(element) {
+function looksLikeDialogue(element) {
     const text = textOf(element);
 
     if (!text) {
         return false;
     }
 
-    // Quoted dialogue with nothing else around it.
-    if (
-        /^["“‘「『].+["”’」』]$/.test(text)
-    ) {
+    // Dialogue beginning with quotation marks.
+    if (/^["“‘「『]/.test(text)) {
         return true;
     }
 
-    // Standalone em-dash dialogue.
-    if (
-        /^[—–]\s*\S/.test(text) &&
-        !/[.!?]["”’」』]?\s+\w+\s+(?:said|asked|replied|shouted|whispered)\b/i.test(text)
-    ) {
+    // Dialogue beginning with an em/en dash.
+    if (/^[—–]\s*\S/.test(text)) {
         return true;
     }
 
     return false;
 }
 
-function shouldPreserveBreak(first, second, site) {
-    return looksLikeStandaloneDialogue(second);
-}
-
     // ============================================================
     // PARAGRAPH MERGING
     // ============================================================
 
-    function areAdjacent(first, second) {
-        let node = first.nextSibling;
-
-        while (node) {
-            if (node === second) {
-                return true;
-            }
-
-            if (node.nodeType === Node.TEXT_NODE) {
-                if (node.textContent.trim() !== '') {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-
-            node = node.nextSibling;
-        }
-
+function areAdjacent(first, second) {
+    if (!first || !second) {
         return false;
     }
 
-    function appendWithSpace(first, second) {
-        const firstText = first.textContent || '';
-        const secondText = second.textContent || '';
+    return first.nextElementSibling === second;
+}
+function appendWithSpace(first, second) {
+    const firstText = first.textContent || '';
+    const secondText = second.textContent || '';
 
-        if (
-            firstText &&
-            secondText &&
-            !/\s$/.test(firstText) &&
-            !/^\s/.test(secondText)
-        ) {
-            first.appendChild(
-                document.createTextNode(' ')
-            );
-        }
-
-        while (second.firstChild) {
-            first.appendChild(second.firstChild);
-        }
-
-        second.remove();
+    if (
+        firstText &&
+        secondText &&
+        !/\s$/.test(firstText) &&
+        !/^\s/.test(secondText)
+    ) {
+        first.appendChild(
+            document.createTextNode(' ')
+        );
     }
+
+    while (second.firstChild) {
+        first.appendChild(second.firstChild);
+    }
+
+    second.remove();
+}
 function saveOriginalChapter(container) {
     if (!originalChapterHTML.has(container)) {
         originalChapterHTML.set(
@@ -457,6 +448,68 @@ function undoCurrentPage() {
 
     modifiedContainers.clear();
 }
+function flattenParagraphWrappers(container, site) {
+    const paragraphs = safeQueryAll(
+        container,
+        site.paragraphSelector
+    );
+
+    if (paragraphs.length < 2) {
+        return;
+    }
+
+    const wrappers = [];
+
+    for (const paragraph of paragraphs) {
+        const wrapper = paragraph.parentElement;
+
+        if (
+            !wrapper ||
+            wrapper.parentElement !== container
+        ) {
+            continue;
+        }
+
+        if (!wrappers.includes(wrapper)) {
+            wrappers.push(wrapper);
+        }
+    }
+
+    if (wrappers.length < 2) {
+        return;
+    }
+
+    for (let i = 0; i < wrappers.length; i++) {
+        const first = wrappers[i];
+
+        if (!first.isConnected) {
+            continue;
+        }
+
+        let next = first.nextElementSibling;
+
+        while (
+            next &&
+            next.tagName === first.tagName &&
+            next.className === first.className
+        ) {
+            const nextParagraphs =
+                safeQueryAll(
+                    next,
+                    site.paragraphSelector
+                );
+
+            for (const paragraph of nextParagraphs) {
+                first.appendChild(paragraph);
+            }
+
+            const wrapperToRemove = next;
+            next = next.nextElementSibling;
+
+            wrapperToRemove.remove();
+        }
+    }
+}
 function cleanChapter(container, site) {
     if (
         !container ||
@@ -475,6 +528,15 @@ processingContainers.add(container);
 
     try {
         // --------------------------------------------------------
+        // Remove junk before merging
+        // --------------------------------------------------------
+
+        removeJunk(
+            container,
+            site
+        );
+
+        // --------------------------------------------------------
         // Navigation text
         // --------------------------------------------------------
 
@@ -489,14 +551,19 @@ processingContainers.add(container);
         }
 
 
-        // --------------------------------------------------------
-        // Find paragraphs
-        // --------------------------------------------------------
+// --------------------------------------------------------
+// Find paragraphs
+// --------------------------------------------------------
 
-        let paragraphs = safeQueryAll(
-            container,
-            site.paragraphSelector
-        );
+flattenParagraphWrappers(
+    container,
+    site
+);
+
+let paragraphs = safeQueryAll(
+    container,
+    site.paragraphSelector
+);
 
 
         // --------------------------------------------------------
@@ -529,74 +596,84 @@ processingContainers.add(container);
         }
 
 
-        // --------------------------------------------------------
-        // Merge artificial paragraph breaks
-        // --------------------------------------------------------
+  // --------------------------------------------------------
+// Merge artificial paragraph breaks
+// --------------------------------------------------------
 
-        let current = paragraphs[0];
+let current = paragraphs[0];
 
-        for (
-            let i = 1;
-            i < paragraphs.length;
-            i++
-        ) {
-            const next = paragraphs[i];
+// Remember whether the previous ORIGINAL paragraph
+// was dialogue. This is important because `current`
+// may contain several merged paragraphs.
+let previousWasDialogue =
+    looksLikeDialogue(current);
 
-            if (
-                !current.isConnected ||
-                !next.isConnected
-            ) {
-                if (next.isConnected) {
-                    current = next;
-                }
-
-                continue;
-            }
-
-            /*
-             * Never merge across another element.
-             *
-             * This keeps <hr>, headings, images, ads,
-             * navigation, etc. as separate content.
-             */
-            if (!areAdjacent(current, next)) {
-                current = next;
-                continue;
-            }
-
-            if (
-                shouldPreserveBreak(
-                    current,
-                    next,
-                    site
-                )
-            ) {
-                current = next;
-                continue;
-            }
-
-const combinedText =
-    (current.textContent || '') +
-    ' ' +
-    (next.textContent || '');
-
-if (
-    countSentences(combinedText) >
-    MAX_MERGED_SENTENCES
+for (
+    let i = 1;
+    i < paragraphs.length;
+    i++
 ) {
-    current = next;
-    continue;
-}
+    const next = paragraphs[i];
 
-appendWithSpace(
-    current,
-    next
-);
+    if (
+        !current.isConnected ||
+        !next.isConnected
+    ) {
+        if (next.isConnected) {
+            current = next;
+            previousWasDialogue =
+                looksLikeDialogue(next);
         }
 
-    } finally {
-        processingContainers.delete(container);
+        continue;
     }
+
+    if (!areAdjacent(current, next)) {
+        current = next;
+        previousWasDialogue =
+            looksLikeDialogue(next);
+
+        continue;
+    }
+
+    const nextIsDialogue =
+        looksLikeDialogue(next);
+
+    // Keep a break only when TWO dialogue paragraphs
+    // are directly back-to-back.
+    if (
+        previousWasDialogue &&
+        nextIsDialogue
+    ) {
+        current = next;
+        previousWasDialogue = nextIsDialogue;
+        continue;
+    }
+
+    const combinedText =
+        (current.textContent || '') +
+        ' ' +
+        (next.textContent || '');
+
+    // Maximum 5 sentences per <p>.
+    if (
+        countSentences(combinedText) >
+        MAX_MERGED_SENTENCES
+    ) {
+        current = next;
+        previousWasDialogue = nextIsDialogue;
+        continue;
+    }
+
+    appendWithSpace(
+        current,
+        next
+    );
+
+    // IMPORTANT:
+    // Track the dialogue status of the ORIGINAL
+    // paragraph we just consumed, not the merged text.
+    previousWasDialogue = nextIsDialogue;
 }
 
     // ============================================================
@@ -1194,6 +1271,23 @@ function injectStyles() {
                             placeholder="p"
                         >
                     </label>
+
+                    <label>
+                        Junk selector
+
+                        <input
+                            id="tts-junk-selector"
+                            value="${escapeHtml(
+                                site?.junkSelector || ''
+                            )}"
+                            placeholder=".ad, .ads, .advertisement"
+                        >
+
+                        <div class="tts-help">
+                            Optional. Elements matching this selector
+                            will be removed before merging.
+                        </div>
+                    </label>
 					
                     <div
                         id="tts-result"
@@ -1318,11 +1412,19 @@ return {
             )
             ?.value
             .trim() || '',
-
+	
     paragraphSelector:
         document
             .getElementById(
                 'tts-paragraph-selector'
+            )
+            ?.value
+            .trim() || '',
+
+    junkSelector:
+        document
+            .getElementById(
+                'tts-junk-selector'
             )
             ?.value
             .trim() || ''
@@ -1395,6 +1497,7 @@ return {
         }
 
         let paragraphCount = 0;
+        let junkCount = 0;
 
         try {
             for (
@@ -1404,6 +1507,13 @@ return {
                     container.querySelectorAll(
                         values.paragraphSelector
                     ).length;
+
+                if (values.junkSelector) {
+                    junkCount +=
+                        container.querySelectorAll(
+                            values.junkSelector
+                        ).length;
+                }
             }
         } catch {
             showResult(
@@ -1415,8 +1525,9 @@ return {
 
         showResult(
             `Found ${containers.length} chapter ` +
-            `container(s) and ${paragraphCount} ` +
-            `paragraph(s).`
+            `container(s), ${paragraphCount} ` +
+            `paragraph(s), and ${junkCount} ` +
+            `junk element(s).`
         );
     }
 
@@ -1462,7 +1573,7 @@ return {
             return;
         }
 
-        // Validate both selectors.
+        // Validate all selectors.
         try {
             document.querySelectorAll(
                 values.chapterContainer
@@ -1471,6 +1582,12 @@ return {
             document.querySelectorAll(
                 values.paragraphSelector
             );
+
+            if (values.junkSelector) {
+                document.querySelectorAll(
+                    values.junkSelector
+                );
+            }
         } catch {
             showResult(
                 'One of the selectors is invalid.',
