@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         pMerger
 // @namespace    https://tampermonkey.net/
-// @version      1.1.11
+// @version      1.1.12
 // @description  Merge artificial webnovel paragraph breaks for smoother TTS.
 // @author       You
 // @match        *://*/*
@@ -71,53 +71,53 @@
     // ============================================================
     // MENU COMMANDS
     // ============================================================
+let applyMenuId = null;
+let undoMenuId = null;
+let toggleMenuId = null;
+let settingsMenuId = null;
 
-    let toggleMenuId = null;
-    let settingsMenuId = null;
-
-    function registerMenuCommands() {
-        // Remove old toggle command if Tampermonkey supplied an ID.
+function registerMenuCommands() {
+    // Remove old menu commands.
+    for (const id of [
+        applyMenuId,
+        undoMenuId,
+        toggleMenuId,
+        settingsMenuId
+    ]) {
         if (
-            toggleMenuId !== null &&
+            id !== null &&
             typeof GM_unregisterMenuCommand === 'function'
         ) {
             try {
-                GM_unregisterMenuCommand(toggleMenuId);
+                GM_unregisterMenuCommand(id);
             } catch {
                 // Ignore unsupported/invalid IDs.
             }
         }
-
-        if (
-            settingsMenuId !== null &&
-            typeof GM_unregisterMenuCommand === 'function'
-        ) {
-            try {
-                GM_unregisterMenuCommand(settingsMenuId);
-            } catch {
-                // Ignore unsupported/invalid IDs.
-            }
-        }
-GM_registerMenuCommand(
-    'pMerger: Apply',
-    applyCurrentPage
-);
-
-GM_registerMenuCommand(
-    'pMerger: Undo',
-    undoCurrentPage
-);
-        toggleMenuId = GM_registerMenuCommand(
-            `TTS Cleaner: ${config.globalEnabled ? 'ON' : 'OFF'}`,
-            toggleCleaner
-        );
-
-        settingsMenuId = GM_registerMenuCommand(
-            'TTS Cleaner — Settings',
-            openSettings
-        );
     }
 
+    applyMenuId = GM_registerMenuCommand(
+        'pMerger: Apply',
+        applyCurrentPage
+    );
+
+    undoMenuId = GM_registerMenuCommand(
+        'pMerger: Undo',
+        undoCurrentPage
+    );
+
+    toggleMenuId = GM_registerMenuCommand(
+        `TTS Cleaner: ${
+            config.globalEnabled ? 'ON' : 'OFF'
+        }`,
+        toggleCleaner
+    );
+
+    settingsMenuId = GM_registerMenuCommand(
+        'TTS Cleaner — Settings',
+        openSettings
+    );
+}
     function toggleCleaner() {
         config.globalEnabled = !config.globalEnabled;
         saveConfig();
@@ -410,13 +410,30 @@ function saveOriginalChapter(container) {
 }
 
 function applyCurrentPage() {
-    if (!isChapterPage()) {
-        return;
-    }
-
     const site = getCurrentSite();
 
     if (!site) {
+        return;
+    }
+
+    if (!site.chapterContainer) {
+        return;
+    }
+
+    if (!site.paragraphSelector) {
+        return;
+    }
+
+    if (
+        !Array.isArray(site.chapterUrlPatterns) ||
+        site.chapterUrlPatterns.length === 0
+    ) {
+        return;
+    }
+
+    if (
+        !site.chapterUrlPatterns.some(matchesUrlPattern)
+    ) {
         return;
     }
 
@@ -448,6 +465,7 @@ function undoCurrentPage() {
 
     modifiedContainers.clear();
 }
+	
 function flattenParagraphWrappers(container, site) {
     const paragraphs = safeQueryAll(
         container,
@@ -479,9 +497,7 @@ function flattenParagraphWrappers(container, site) {
         return;
     }
 
-    for (let i = 0; i < wrappers.length; i++) {
-        const first = wrappers[i];
-
+    for (const first of wrappers) {
         if (!first.isConnected) {
             continue;
         }
