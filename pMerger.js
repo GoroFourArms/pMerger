@@ -725,38 +725,45 @@ function countSentences(
     // INLINE ELEMENTS
     // ============================================================
 
-    function isInlineElement(
-        element
-    ) {
-        if (!isElement(element)) {
-            return false;
-        }
-
-        const tag =
-            element.tagName
-                .toLowerCase();
-
-        return [
-            'span',
-            'a',
-            'b',
-            'strong',
-            'i',
-            'em',
-            'u',
-            's',
-            'small',
-            'mark',
-            'sub',
-            'sup',
-            'code',
-            'abbr',
-            'cite',
-            'q',
-            'label'
-        ].includes(tag);
+function isInlineElement(
+    element
+) {
+    if (!isElement(element)) {
+        return false;
     }
 
+    const tag =
+        element.tagName
+            .toLowerCase();
+
+    return [
+        'span',
+        'a',
+        'b',
+        'strong',
+        'i',
+        'em',
+        'u',
+        's',
+        'small',
+        'mark',
+        'sub',
+        'sup',
+        'code',
+        'abbr',
+        'cite',
+        'q',
+        'label',
+        'ruby',
+        'rt',
+        'rp',
+        'time',
+        'kbd',
+        'samp',
+        'var',
+        'wbr'
+    ].includes(tag);
+}
 
     // ============================================================
     // BLOCK ELEMENTS
@@ -811,19 +818,17 @@ function countSentences(
     // ============================================================
     // SPECIAL ELEMENTS
     // ============================================================
-function isHardBoundary(
-    element
-) {
+function isHardBoundary(element) {
     if (!isElement(element)) {
         return false;
     }
 
     const tag =
-        element.tagName
-            .toLowerCase();
+        element.tagName.toLowerCase();
 
     return [
         'hr',
+
         'h1',
         'h2',
         'h3',
@@ -839,6 +844,7 @@ function isHardBoundary(
         'table',
         'ul',
         'ol',
+        'dl',
 
         'figure',
         'blockquote',
@@ -848,7 +854,10 @@ function isHardBoundary(
         'nav',
         'header',
         'footer',
-        'aside'
+        'aside',
+
+        'form',
+        'fieldset'
     ].includes(tag);
 }
 
@@ -908,12 +917,16 @@ function getNavigationReplacement(element) {
         return null;
     }
 
+    /*
+     * Already-converted navigation is no longer
+     * considered navigation.
+     */
     if (
         element.getAttribute(
             'data-pmerger-navigation'
         ) === 'true'
     ) {
-        return element.textContent.trim();
+        return null;
     }
 
     const tag =
@@ -935,6 +948,7 @@ function getNavigationReplacement(element) {
 
     if (
         text === 'next' ||
+        text === 'Next Chapter –>' ||
         text === 'next chapter'
     ) {
         return '~~>';
@@ -942,6 +956,7 @@ function getNavigationReplacement(element) {
 
     if (
         text === 'previous' ||
+        text === '<– Previous Chapter' ||
         text === 'previous chapter'
     ) {
         return '<~~';
@@ -1034,50 +1049,88 @@ function getNavigationReplacement(element) {
         'data-seq'
     ];
 
-
-    function getOrderValue(
-        element
-    ) {
-        if (!isElement(element)) {
-            return null;
-        }
-
-        for (
-            const attribute
-            of ORDER_ATTRIBUTES
-        ) {
-            const value =
-                element.getAttribute(
-                    attribute
-                );
-
-            if (
-                value === null
-            ) {
-                continue;
-            }
-
-            const number =
-                Number(
-                    value
-                        .trim()
-                );
-
-            if (
-                Number.isFinite(
-                    number
-                )
-            ) {
-                return {
-                    attribute,
-                    value,
-                    number
-                };
-            }
-        }
-
+function getOrderValue(
+    element
+) {
+    if (!isElement(element)) {
         return null;
     }
+
+    /*
+     * Prefer explicit ordering attributes.
+     */
+    const explicitAttributes = [
+        'data-order',
+        'data-index',
+        'data-number',
+        'data-sequence',
+        'data-seq'
+    ];
+
+    for (
+        const attribute
+        of explicitAttributes
+    ) {
+        const value =
+            element.getAttribute(
+                attribute
+            );
+
+        if (
+            value === null
+        ) {
+            continue;
+        }
+
+        const number =
+            Number(
+                value.trim()
+            );
+
+        if (
+            Number.isFinite(
+                number
+            )
+        ) {
+            return {
+                attribute,
+                value,
+                number
+            };
+        }
+    }
+
+    /*
+     * Only accept generic data="" when it
+     * actually looks like a simple sequence value.
+     */
+    const genericData =
+        element.getAttribute(
+            'data'
+        );
+
+    if (
+        genericData !== null
+    ) {
+        const number =
+            Number(
+                genericData.trim()
+            );
+
+        if (
+            Number.isFinite(number) &&
+            (number === 0 || number === 1)
+        ) {
+            return {
+                attribute: 'data',
+                value: genericData,
+                number
+            };
+        }
+    }
+
+    return null;
+}
 
 
     // ============================================================
@@ -1106,25 +1159,6 @@ function getNavigationReplacement(element) {
         return false;
     }
 
-
-    function getElementDepth(
-        element,
-        chapter
-    ) {
-        let depth = 0;
-        let current = element;
-
-        while (
-            current &&
-            current !== chapter
-        ) {
-            depth++;
-            current =
-                current.parentElement;
-        }
-
-        return depth;
-    }
 
 
     // ============================================================
@@ -1545,55 +1579,42 @@ function analyzeChapter(
     // JUNK DETECTION
     // ============================================================
 
-    function isConfiguredJunk(
-        element,
-        site
-    ) {
-        if (
-            !element ||
-            !site ||
-            !site.junkSelector
-        ) {
-            return false;
-        }
 
-        return elementMatches(
-            element,
+function removeConfiguredJunk(
+    chapter,
+    site
+) {
+    if (
+        !chapter ||
+        !site ||
+        !site.junkSelector
+    ) {
+        return false;
+    }
+
+    const junk =
+        safeQueryAll(
+            chapter,
             site.junkSelector
         );
-    }
 
+    let changed = false;
 
-    function removeConfiguredJunk(
-        chapter,
-        site
+    for (
+        const element
+        of junk
     ) {
         if (
-            !site ||
-            !site.junkSelector
+            element.isConnected &&
+            element !== chapter
         ) {
-            return;
-        }
-
-        const junk =
-            safeQueryAll(
-                chapter,
-                site.junkSelector
-            );
-
-        for (
-            const element
-            of junk
-        ) {
-            if (
-                element.isConnected &&
-                element !== chapter
-            ) {
-                element.remove();
-            }
+            element.remove();
+            changed = true;
         }
     }
 
+    return changed;
+}
 
     // ============================================================
     // BOUNDARIES
@@ -1653,11 +1674,8 @@ function areAdjacentTextBlocks(first, second) {
         return false;
     }
 
-    const firstElement =
-        first.element;
-
-    const secondElement =
-        second.element;
+    const firstElement = first.element;
+    const secondElement = second.element;
 
     if (
         firstElement === secondElement ||
@@ -1667,17 +1685,31 @@ function areAdjacentTextBlocks(first, second) {
         return false;
     }
 
+    if (
+        !firstElement.isConnected ||
+        !secondElement.isConnected
+    ) {
+        return false;
+    }
+
+    const position =
+        firstElement.compareDocumentPosition(
+            secondElement
+        );
+
+    if (
+        !(position &
+        Node.DOCUMENT_POSITION_FOLLOWING)
+    ) {
+        return false;
+    }
+
     const range =
         document.createRange();
 
     try {
-        range.setStartAfter(
-            firstElement
-        );
-
-        range.setEndBefore(
-            secondElement
-        );
+        range.setStartAfter(firstElement);
+        range.setEndBefore(secondElement);
     } catch {
         return false;
     }
@@ -1685,12 +1717,9 @@ function areAdjacentTextBlocks(first, second) {
     const fragment =
         range.cloneContents();
 
-    const elements =
-        fragment.querySelectorAll('*');
-
     for (
         const element
-        of elements
+        of fragment.querySelectorAll('*')
     ) {
         if (
             isSceneBreakElement(element) ||
@@ -1708,141 +1737,13 @@ function areAdjacentTextBlocks(first, second) {
         }
     }
 
-    const text =
+    return (
         fragment.textContent
-            .replace(/\s+/g, '');
-
-    return text.length === 0;
+            .replace(/\s+/g, '')
+            .length === 0
+    );
 }
 
-    function getNextMeaningfulNode(
-        element
-    ) {
-        if (!element) {
-            return null;
-        }
-
-        /*
-         * First try the first meaningful descendant
-         * of the next sibling.
-         */
-        let sibling =
-            element.nextSibling;
-
-        while (sibling) {
-            if (
-                isTextNode(sibling) &&
-                isWhitespaceOnly(sibling)
-            ) {
-                sibling =
-                    sibling.nextSibling;
-
-                continue;
-            }
-
-            if (
-                isElement(sibling)
-            ) {
-                return (
-                    getFirstMeaningfulElement(
-                        sibling
-                    ) ||
-                    sibling
-                );
-            }
-
-            return sibling;
-        }
-
-        /*
-         * No sibling. Walk upward until a parent
-         * has a next sibling.
-         */
-        let parent =
-            element.parentElement;
-
-        while (parent) {
-            sibling =
-                parent.nextSibling;
-
-            while (sibling) {
-                if (
-                    isTextNode(
-                        sibling
-                    ) &&
-                    isWhitespaceOnly(
-                        sibling
-                    )
-                ) {
-                    sibling =
-                        sibling.nextSibling;
-
-                    continue;
-                }
-
-                if (
-                    isElement(
-                        sibling
-                    )
-                ) {
-                    return (
-                        getFirstMeaningfulElement(
-                            sibling
-                        ) ||
-                        sibling
-                    );
-                }
-
-                return sibling;
-            }
-
-            parent =
-                parent.parentElement;
-        }
-
-        return null;
-    }
-
-
-    function getFirstMeaningfulElement(
-        element
-    ) {
-        if (!isElement(element)) {
-            return null;
-        }
-
-        if (
-            textOf(element)
-        ) {
-            /*
-             * If this element directly contains
-             * readable text, it is meaningful.
-             */
-            if (
-                hasDirectText(
-                    element
-                )
-            ) {
-                return element;
-            }
-        }
-
-        for (
-            const child
-            of element.children
-        ) {
-            const result =
-                getFirstMeaningfulElement(
-                    child
-                );
-
-            if (result) {
-                return result;
-            }
-        }
-
-        return null;
-    }
 
 
     // ============================================================
@@ -2238,19 +2139,32 @@ function mergeOperation(
     // NAVIGATION REPLACEMENT
     // ============================================================
 
-function replaceNavigationElement(element) {
-    const replacement =
-        getNavigationReplacement(element);
 
-    if (!replacement) {
+  function replaceNavigationElement(
+    element
+) {
+    if (!isElement(element)) {
         return false;
     }
 
+    /*
+     * Never process an element that pMerger
+     * has already converted.
+     */
     if (
         element.getAttribute(
             'data-pmerger-navigation'
         ) === 'true'
     ) {
+        return false;
+    }
+
+    const replacement =
+        getNavigationReplacement(
+            element
+        );
+
+    if (!replacement) {
         return false;
     }
 
@@ -2266,102 +2180,101 @@ function replaceNavigationElement(element) {
 }
 
 
-    function applyNavigationReplacements(
-        analysis
+function applyNavigationReplacements(
+    analysis
+) {
+    if (
+        !analysis ||
+        !Array.isArray(
+            analysis.blocks
+        )
+    ) {
+        return false;
+    }
+
+    let changed = false;
+
+    for (
+        const block
+        of analysis.blocks
     ) {
         if (
-            !analysis ||
-            !Array.isArray(
-                analysis.blocks
+            block.type !==
+            BLOCK_TYPES.NAVIGATION
+        ) {
+            continue;
+        }
+
+        if (
+            replaceNavigationElement(
+                block.element
             )
         ) {
-            return false;
+            changed = true;
         }
-
-        let changed = false;
-
-        for (
-            const block
-            of analysis.blocks
-        ) {
-            if (
-                block.type !==
-                BLOCK_TYPES.NAVIGATION
-            ) {
-                continue;
-            }
-
-            const replacement =
-                getNavigationReplacement(
-                    block.element
-                );
-
-            if (!replacement) {
-                continue;
-            }
-
-            if (
-                replaceNavigationElement(
-                    block.element,
-                    replacement
-                )
-            ) {
-                changed = true;
-            }
-        }
-
-        return changed;
     }
+
+    return changed;
+}
 
 
     // ============================================================
     // SCENE BREAK NORMALIZATION
     // ============================================================
 
-    function normalizeSceneBreak(
-        element
+function normalizeSceneBreak(
+    element
+) {
+    if (
+        !element ||
+        !element.isConnected
     ) {
-        if (
-            !element ||
-            !element.isConnected
-        ) {
-            return false;
-        }
-
-        /*
-         * Existing <hr> is already correct.
-         */
-        if (
-            element.tagName
-                .toLowerCase() ===
-            'hr'
-        ) {
-            return false;
-        }
-
-        const hr =
-            document.createElement(
-                'hr'
-            );
-
-        /*
-         * Preserve the class attribute when possible.
-         * This helps the site's CSS continue to style
-         * the separator.
-         */
-        if (
-            element.className
-        ) {
-            hr.className =
-                element.className;
-        }
-
-        element.replaceWith(
-            hr
-        );
-
-        return true;
+        return false;
     }
+
+    /*
+     * Existing <hr> is already correct.
+     */
+    if (
+        element.tagName
+            .toLowerCase() ===
+        'hr'
+    ) {
+        return false;
+    }
+
+    const hr =
+        document.createElement('hr');
+
+    /*
+     * Preserve the original attributes
+     * where possible.
+     */
+    for (
+        const attribute
+        of element.attributes
+    ) {
+        /*
+         * Do not copy pMerger's own markers.
+         */
+        if (
+            attribute.name.startsWith(
+                'data-pmerger-'
+            )
+        ) {
+            continue;
+        }
+
+        hr.setAttribute(
+            attribute.name,
+            attribute.value
+        );
+    }
+
+    element.replaceWith(hr);
+
+    return true;
+}
 
 
     function normalizeSceneBreaks(
@@ -2405,7 +2318,6 @@ function replaceNavigationElement(element) {
     // ============================================================
     // COMPLETE CHAPTER TRANSFORMATION
     // ============================================================
-
 function processChapter(
     chapter,
     site
@@ -2430,16 +2342,22 @@ function processChapter(
     );
 
     try {
+        let changed = false;
+
         /*
          * Remove configured junk first.
          */
-        removeConfiguredJunk(
-            chapter,
-            site
-        );
+        if (
+            removeConfiguredJunk(
+                chapter,
+                site
+            )
+        ) {
+            changed = true;
+        }
 
         /*
-         * First analysis.
+         * Analyze the cleaned chapter.
          */
         let analysis =
             analyzeChapter(
@@ -2448,28 +2366,32 @@ function processChapter(
             );
 
         /*
-         * Handle navigation and scene breaks first.
-         */
-        const navigationChanged =
-            applyNavigationReplacements(
-                analysis
-            );
-
-        const sceneChanged =
-            normalizeSceneBreaks(
-                analysis
-            );
-
-        /*
-         * The DOM changed, so rebuild the analysis.
-         *
-         * This prevents the merge engine from using
-         * stale references to navigation/scene elements.
+         * Replace navigation.
          */
         if (
-            navigationChanged ||
-            sceneChanged
+            applyNavigationReplacements(
+                analysis
+            )
         ) {
+            changed = true;
+        }
+
+        /*
+         * Convert scene breaks to <hr>.
+         */
+        if (
+            normalizeSceneBreaks(
+                analysis
+            )
+        ) {
+            changed = true;
+        }
+
+        /*
+         * Navigation and scene-break changes
+         * alter the DOM, so analyze again.
+         */
+        if (changed) {
             analysis =
                 analyzeChapter(
                     chapter,
@@ -2478,24 +2400,22 @@ function processChapter(
         }
 
         /*
-         * Now build the merge plan from the
-         * final pre-merge DOM.
+         * Merge normal text blocks.
          */
         const plan =
             createMergePlan(
                 analysis
             );
 
-        const mergeChanged =
+        if (
             applyMergePlan(
                 plan
-            );
+            )
+        ) {
+            changed = true;
+        }
 
-        return (
-            navigationChanged ||
-            sceneChanged ||
-            mergeChanged
-        );
+        return changed;
 
     } finally {
         processingContainers.delete(
@@ -2507,75 +2427,6 @@ function processChapter(
     // POST-MERGE ORDER METADATA
     // ============================================================
 
-    function collectOrderedElements(
-        chapter
-    ) {
-        const elements =
-            safeQueryAll(
-                chapter,
-                '*'
-            );
-
-        const ordered = [];
-
-        for (
-            const element
-            of elements
-        ) {
-            const order =
-                getOrderValue(
-                    element
-                );
-
-            if (!order) {
-                continue;
-            }
-
-            ordered.push({
-                element,
-                attribute:
-                    order.attribute,
-                value:
-                    order.value,
-                number:
-                    order.number
-            });
-        }
-
-        return ordered;
-    }
-
-
-    function groupOrderMetadata(
-        ordered
-    ) {
-        const groups =
-            new Map();
-
-        for (
-            const item
-            of ordered
-        ) {
-            if (
-                !groups.has(
-                    item.attribute
-                )
-            ) {
-                groups.set(
-                    item.attribute,
-                    []
-                );
-            }
-
-            groups.get(
-                item.attribute
-            ).push(
-                item
-            );
-        }
-
-        return groups;
-    }
 
 
     function isLikelySequence(
@@ -2766,42 +2617,6 @@ function reindexOrderMetadata(chapter) {
     // EMPTY ELEMENT CLEANUP
     // ============================================================
 
-    function isEmptyAfterCleanup(
-        element
-    ) {
-        if (!isElement(element)) {
-            return false;
-        }
-
-        /*
-         * Never remove structural elements that
-         * have semantic meaning.
-         */
-        const tag =
-            element.tagName
-                .toLowerCase();
-
-        if (
-            [
-                'hr',
-                'img',
-                'br',
-                'input',
-                'textarea',
-                'select',
-                'button',
-                'a'
-            ].includes(tag)
-        ) {
-            return false;
-        }
-
-        return (
-            !textOf(element) &&
-            element.children.length === 0
-        );
-    }
-
 function removeEmptyElements(chapter) {
     if (!chapter) {
         return false;
@@ -2833,10 +2648,7 @@ function removeEmptyElements(chapter) {
     return changed;
 }
 
-
-function cleanupTextNodes(
-    chapter
-) {
+function cleanupTextNodes(chapter) {
     if (!chapter) {
         return false;
     }
@@ -2854,12 +2666,9 @@ function cleanupTextNodes(
     let node;
 
     while (
-        (node =
-            walker.nextNode())
+        (node = walker.nextNode())
     ) {
-        nodes.push(
-            node
-        );
+        nodes.push(node);
     }
 
     for (
@@ -2872,16 +2681,13 @@ function cleanupTextNodes(
             continue;
         }
 
-        /*
-         * Preserve formatting-sensitive text.
-         */
         const parent =
             textNode.parentElement;
 
         if (
             parent &&
             parent.closest(
-                'pre, code'
+                'pre, code, textarea'
             )
         ) {
             continue;
@@ -2907,7 +2713,6 @@ function cleanupTextNodes(
 
     return changed;
 }
-
     // ============================================================
     // FINAL CHAPTER CLEANUP
     // ============================================================
@@ -3105,59 +2910,70 @@ function cleanupTextNodes(
     // MUTATION OBSERVER
     // ============================================================
 
-    function handleAddedNode(
-        node
+function handleAddedNode(node) {
+    if (!node) {
+        return;
+    }
+
+    const site =
+        getCurrentSite();
+
+    if (!site) {
+        return;
+    }
+
+    let element = null;
+
+    if (
+        node.nodeType ===
+        Node.ELEMENT_NODE
+    ) {
+        element = node;
+    } else if (
+        node.nodeType ===
+        Node.TEXT_NODE
+    ) {
+        element = node.parentElement;
+    }
+
+    if (!element) {
+        return;
+    }
+
+    const chapters =
+        findChapterContainers(
+            element,
+            site.chapterContainer
+        );
+
+    for (
+        const chapter
+        of chapters
     ) {
         if (
-            !node ||
-            node.nodeType !==
-                Node.ELEMENT_NODE
+            chapter.isConnected
         ) {
-            return;
-        }
-
-        const site =
-            getCurrentSite();
-
-        if (!site) {
-            return;
-        }
-
-        /*
-         * The added node itself may be a chapter.
-         */
-        const directChapters =
-            findChapterContainers(
-                node,
-                site.chapterContainer
-            );
-
-        for (
-            const chapter
-            of directChapters
-        ) {
-            scheduleChapterProcessing(
-                chapter
-            );
-        }
-
-
-        /*
-         * Or content may have been inserted
-         * inside an existing chapter.
-         */
-        const chapter =
-            closestChapter(
-                node,
-                site.chapterContainer
-            );
-
-        if (chapter) {
             scheduleChapterProcessing(
                 chapter
             );
         }
     }
+
+    const chapter =
+        closestChapter(
+            element,
+            site.chapterContainer
+        );
+
+    if (
+        chapter &&
+        chapter.isConnected
+    ) {
+        scheduleChapterProcessing(
+            chapter
+        );
+    }
+}
 
 
     function handleMutations(
@@ -3235,51 +3051,58 @@ function cleanupTextNodes(
     // ============================================================
     // URL WATCHER
     // ============================================================
+function checkForUrlChange() {
+    const currentUrl =
+        location.href;
 
-    function checkForUrlChange() {
-        const currentUrl =
-            location.href;
-
-        if (
-            currentUrl ===
-            lastUrl
-        ) {
-            return;
-        }
-
-        lastUrl =
-            currentUrl;
-
-        /*
-         * Invalidate any delayed processing from
-         * the previous page.
-         */
-        processingGeneration++;
-
-        if (
-            !config.globalEnabled
-        ) {
-            return;
-        }
-
-        /*
-         * Give SPA navigation a moment to render
-         * the new chapter.
-         */
-        setTimeout(
-            () => {
-                if (
-                    !config.globalEnabled
-                ) {
-                    return;
-                }
-
-                processAllChapters();
-            },
-            100
-        );
+    if (
+        currentUrl ===
+        lastUrl
+    ) {
+        return;
     }
 
+    lastUrl =
+        currentUrl;
+
+    processingGeneration++;
+
+    const generation =
+        processingGeneration;
+
+    if (
+        !config.globalEnabled
+    ) {
+        return;
+    }
+
+    setTimeout(
+        () => {
+            if (
+                generation !==
+                processingGeneration
+            ) {
+                return;
+            }
+
+            if (
+                !config.globalEnabled
+            ) {
+                return;
+            }
+
+            if (
+                !isChapterPage()
+            ) {
+                return;
+            }
+
+            processAllChapters();
+
+        },
+        150
+    );
+}
 
     // ============================================================
     // START CLEANER
@@ -3519,136 +3342,584 @@ function cleanupTextNodes(
     // ============================================================
     // SETTINGS
     // ============================================================
+function openSettings() {
+    const domain = getDomain();
 
-    function openSettings() {
-        const site =
-            getCurrentSite();
+    let site = config.sites[domain];
 
-        if (!site) {
-            alert(
-                '[pMerger] No site configuration exists for this domain.'
-            );
+    if (!site || typeof site !== 'object') {
+        site = {
+            enabled: true,
+            chapterUrlPatterns: [],
+            chapterContainer: '',
+            junkSelector: ''
+        };
+    }
 
-            return;
+    const existing = document.getElementById('pmerger-settings-panel');
+
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    function suggestUrlPattern() {
+        const path = location.pathname;
+
+        if (!path || path === '/') {
+            return location.href;
         }
 
-        const currentPatterns =
-            Array.isArray(
-                site.chapterUrlPatterns
-            )
-                ? site.chapterUrlPatterns.join(
-                    '\n'
-                )
+        const parts = path.split('/').filter(Boolean);
+
+        if (parts.length === 0) {
+            return location.href;
+        }
+
+        const last = parts[parts.length - 1];
+
+        if (/chapter[-_ ]?\d+/i.test(last)) {
+            return '/' + parts.slice(0, -1).join('/') + '/chapter-*';
+        }
+
+        if (/^\d+$/.test(last)) {
+            return '/' + parts.slice(0, -1).join('/') + '/*';
+        }
+
+        if (/chapter/i.test(path)) {
+            const index = parts.findIndex(part =>
+                /chapter/i.test(part)
+            );
+
+            if (index >= 0) {
+                return '/' + parts.slice(0, index + 1).join('/') + '/*';
+            }
+        }
+
+        return '/' + parts.join('/');
+    }
+
+    function scoreContainer(element) {
+        if (!element || !isElement(element)) {
+            return -Infinity;
+        }
+
+        const text = textOf(element);
+
+        if (text.length < 200) {
+            return -Infinity;
+        }
+
+        const rect = element.getBoundingClientRect();
+
+        if (rect.width < 200) {
+            return -Infinity;
+        }
+
+        let score = 0;
+
+        const tag = element.tagName.toLowerCase();
+        const className =
+            typeof element.className === 'string'
+                ? element.className.toLowerCase()
                 : '';
 
-        const chapterPatterns =
-            prompt(
-                'Chapter URL patterns, one per line:',
-                currentPatterns
-            );
+        const id =
+            typeof element.id === 'string'
+                ? element.id.toLowerCase()
+                : '';
+
+        const combined = `${className} ${id}`;
 
         if (
-            chapterPatterns === null
+            /chapter|content|entry|post|article|novel|text|story|reader/.test(
+                combined
+            )
         ) {
-            return;
+            score += 8;
         }
 
-        const chapterContainer =
-            prompt(
-                'Chapter container CSS selector:',
-                site.chapterContainer || ''
-            );
-
-        if (
-            chapterContainer === null
-        ) {
-            return;
+        if (tag === 'article') {
+            score += 6;
         }
 
-        const junkSelector =
-            prompt(
-                'Optional junk CSS selector:',
-                site.junkSelector || ''
-            );
-
-        if (
-            junkSelector === null
-        ) {
-            return;
+        if (tag === 'main') {
+            score += 4;
         }
 
-        const patterns =
-            chapterPatterns
-                .split('\n')
-                .map(
-                    value =>
-                        value.trim()
-                )
-                .filter(
-                    Boolean
-                );
-
-        if (
-            patterns.length === 0
-        ) {
-            alert(
-                '[pMerger] At least one chapter URL pattern is required.'
-            );
-
-            return;
+        if (tag === 'section') {
+            score += 2;
         }
 
-        if (
-            !chapterContainer.trim()
-        ) {
-            alert(
-                '[pMerger] A chapter container selector is required.'
-            );
+        const paragraphs = element.querySelectorAll(
+            'p, div.paragraph, div[class*="paragraph"], [class*="chapter"]'
+        ).length;
 
-            return;
+        score += Math.min(paragraphs, 20);
+
+        const links = element.querySelectorAll('a').length;
+
+        if (links > 30) {
+            score -= 8;
         }
 
+        const buttons = element.querySelectorAll('button').length;
 
-        /*
-         * Save only the settings that belong
-         * to this site.
-         */
-        site.chapterUrlPatterns =
-            patterns;
-
-        site.chapterContainer =
-            chapterContainer.trim();
-
-        site.junkSelector =
-            junkSelector.trim();
-
-        site.enabled = true;
-
-        config.sites[
-            getDomain()
-        ] = site;
-
-        processingGeneration++;
-
-        saveConfig();
-
-        /*
-         * Re-register the menu so the current
-         * configuration is immediately reflected.
-         */
-        registerMenuCommands();
-
-
-        /*
-         * Re-process the current page if the
-         * global switch is enabled.
-         */
-        if (
-            config.globalEnabled
-        ) {
-            startCleaner();
+        if (buttons > 10) {
+            score -= 6;
         }
+
+        const images = element.querySelectorAll('img').length;
+
+        if (images > 10) {
+            score -= 5;
+        }
+
+        return score;
     }
+
+    function suggestContainer() {
+        const candidates = [];
+
+        const selectors = [
+            'article',
+            'main',
+            'section',
+            '[class*="chapter"]',
+            '[id*="chapter"]',
+            '[class*="content"]',
+            '[id*="content"]',
+            '[class*="entry"]',
+            '[class*="post"]',
+            '[class*="reader"]'
+        ];
+
+        const seen = new Set();
+
+        for (const selector of selectors) {
+            let elements = [];
+
+            try {
+                elements = document.querySelectorAll(selector);
+            } catch {
+                continue;
+            }
+
+            for (const element of elements) {
+                if (seen.has(element)) {
+                    continue;
+                }
+
+                seen.add(element);
+
+                const score = scoreContainer(element);
+
+                if (score > -Infinity) {
+                    candidates.push({
+                        element,
+                        score
+                    });
+                }
+            }
+        }
+
+        candidates.sort(
+            (a, b) => b.score - a.score
+        );
+
+        if (candidates.length === 0) {
+            return '';
+        }
+
+        const element = candidates[0].element;
+
+        if (element.id) {
+            return `#${CSS.escape(element.id)}`;
+        }
+
+        const classes = Array.from(element.classList)
+            .filter(Boolean)
+            .slice(0, 2);
+
+        if (classes.length > 0) {
+            return (
+                element.tagName.toLowerCase() +
+                classes.map(
+                    className =>
+                        `.${CSS.escape(className)}`
+                ).join('')
+            );
+        }
+
+        return element.tagName.toLowerCase();
+    }
+
+    const suggestedPattern =
+        site.chapterUrlPatterns?.length
+            ? site.chapterUrlPatterns.join('\n')
+            : suggestUrlPattern();
+
+    const suggestedContainer =
+        site.chapterContainer ||
+        suggestContainer();
+
+    const overlay =
+        document.createElement('div');
+
+    overlay.id =
+        'pmerger-settings-panel';
+
+    overlay.style.cssText = `
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        background: rgba(0,0,0,.65);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        box-sizing: border-box;
+        font-family: Arial, sans-serif;
+    `;
+
+    const panel =
+        document.createElement('div');
+
+    panel.style.cssText = `
+        width: min(600px, 100%);
+        max-height: 90vh;
+        overflow-y: auto;
+        background: #fff;
+        color: #111;
+        border-radius: 10px;
+        padding: 24px;
+        box-sizing: border-box;
+        box-shadow: 0 10px 40px rgba(0,0,0,.4);
+    `;
+
+    const title =
+        document.createElement('h2');
+
+    title.textContent =
+        'pMerger Settings';
+
+    title.style.cssText =
+        'margin:0 0 6px;font-size:22px;';
+
+    panel.appendChild(title);
+
+    const domainLabel =
+        document.createElement('div');
+
+    domainLabel.textContent =
+        `Site: ${domain}`;
+
+    domainLabel.style.cssText =
+        'margin-bottom:20px;color:#666;font-size:14px;';
+
+    panel.appendChild(domainLabel);
+
+    function addLabel(text) {
+        const label =
+            document.createElement('label');
+
+        label.textContent = text;
+
+        label.style.cssText =
+            'display:block;margin:16px 0 6px;font-weight:600;font-size:14px;';
+
+        panel.appendChild(label);
+
+        return label;
+    }
+
+    addLabel('Chapter URL pattern');
+
+    const urlHelp =
+        document.createElement('div');
+
+    urlHelp.textContent =
+        'Suggested from the current page. Edit if needed. Use * as a wildcard.';
+
+    urlHelp.style.cssText =
+        'margin-bottom:6px;color:#666;font-size:12px;';
+
+    panel.appendChild(urlHelp);
+
+    const urlInput =
+        document.createElement('textarea');
+
+    urlInput.value =
+        suggestedPattern;
+
+    urlInput.rows = 3;
+
+    urlInput.style.cssText = `
+        width:100%;
+        box-sizing:border-box;
+        padding:10px;
+        border:1px solid #bbb;
+        border-radius:6px;
+        resize:vertical;
+        font:inherit;
+    `;
+
+    panel.appendChild(urlInput);
+
+    addLabel('Chapter container selector');
+
+    const containerHelp =
+        document.createElement('div');
+
+    containerHelp.textContent =
+        'Suggested from the largest likely chapter-content element.';
+
+    containerHelp.style.cssText =
+        'margin-bottom:6px;color:#666;font-size:12px;';
+
+    panel.appendChild(containerHelp);
+
+    const containerInput =
+        document.createElement('input');
+
+    containerInput.type =
+        'text';
+
+    containerInput.value =
+        suggestedContainer;
+
+    containerInput.style.cssText = `
+        width:100%;
+        box-sizing:border-box;
+        padding:10px;
+        border:1px solid #bbb;
+        border-radius:6px;
+        font:inherit;
+    `;
+
+    panel.appendChild(containerInput);
+
+    addLabel('Optional junk selector');
+
+    const junkHelp =
+        document.createElement('div');
+
+    junkHelp.textContent =
+        'Optional. Matching elements are removed before merging.';
+
+    junkHelp.style.cssText =
+        'margin-bottom:6px;color:#666;font-size:12px;';
+
+    panel.appendChild(junkHelp);
+
+    const junkInput =
+        document.createElement('input');
+
+    junkInput.type =
+        'text';
+
+    junkInput.value =
+        site.junkSelector || '';
+
+    junkInput.style.cssText = `
+        width:100%;
+        box-sizing:border-box;
+        padding:10px;
+        border:1px solid #bbb;
+        border-radius:6px;
+        font:inherit;
+    `;
+
+    panel.appendChild(junkInput);
+
+    const error =
+        document.createElement('div');
+
+    error.style.cssText = `
+        display:none;
+        margin-top:14px;
+        padding:10px;
+        border-radius:6px;
+        background:#ffe5e5;
+        color:#a00000;
+        font-size:13px;
+    `;
+
+    panel.appendChild(error);
+
+    const buttons =
+        document.createElement('div');
+
+    buttons.style.cssText = `
+        display:flex;
+        justify-content:flex-end;
+        gap:10px;
+        margin-top:24px;
+    `;
+
+    const cancel =
+        document.createElement('button');
+
+    cancel.type =
+        'button';
+
+    cancel.textContent =
+        'Cancel';
+
+    cancel.style.cssText = `
+        padding:10px 16px;
+        border:1px solid #aaa;
+        border-radius:6px;
+        background:#fff;
+        cursor:pointer;
+    `;
+
+    const save =
+        document.createElement('button');
+
+    save.type =
+        'button';
+
+    save.textContent =
+        'Save';
+
+    save.style.cssText = `
+        padding:10px 16px;
+        border:0;
+        border-radius:6px;
+        background:#222;
+        color:#fff;
+        cursor:pointer;
+    `;
+
+    buttons.appendChild(cancel);
+    buttons.appendChild(save);
+    panel.appendChild(buttons);
+
+    overlay.appendChild(panel);
+
+    const mount =
+        document.body || document.documentElement;
+
+    mount.appendChild(overlay);
+
+    function closeSettings() {
+        overlay.remove();
+        document.removeEventListener(
+            'keydown',
+            escapeHandler
+        );
+    }
+
+    cancel.addEventListener(
+        'click',
+        closeSettings
+    );
+
+    overlay.addEventListener(
+        'click',
+        event => {
+            if (event.target === overlay) {
+                closeSettings();
+            }
+        }
+    );
+
+    const escapeHandler =
+        event => {
+            if (event.key === 'Escape') {
+                closeSettings();
+            }
+        };
+
+    document.addEventListener(
+        'keydown',
+        escapeHandler
+    );
+
+    save.addEventListener(
+        'click',
+        () => {
+            error.style.display = 'none';
+
+            const patterns =
+                urlInput.value
+                    .split('\n')
+                    .map(value => value.trim())
+                    .filter(Boolean);
+
+            const chapterContainer =
+                containerInput.value.trim();
+
+            const junkSelector =
+                junkInput.value.trim();
+
+            if (patterns.length === 0) {
+                error.textContent =
+                    'Enter at least one chapter URL pattern.';
+
+                error.style.display = 'block';
+                return;
+            }
+
+            if (!chapterContainer) {
+                error.textContent =
+                    'Enter a chapter container selector.';
+
+                error.style.display = 'block';
+                return;
+            }
+
+            try {
+                document.querySelector(
+                    chapterContainer
+                );
+            } catch {
+                error.textContent =
+                    'The chapter container selector is invalid.';
+
+                error.style.display = 'block';
+                return;
+            }
+
+            if (junkSelector) {
+                try {
+                    document.querySelector(
+                        junkSelector
+                    );
+                } catch {
+                    error.textContent =
+                        'The junk selector is invalid.';
+
+                    error.style.display = 'block';
+                    return;
+                }
+            }
+
+            config.sites[domain] = {
+                enabled: true,
+                chapterUrlPatterns: patterns,
+                chapterContainer,
+                junkSelector
+            };
+
+            processingGeneration++;
+
+            saveConfig();
+            registerMenuCommands();
+            closeSettings();
+
+            if (config.globalEnabled) {
+                startCleaner();
+            }
+        }
+    );
+
+    setTimeout(() => {
+        urlInput.focus();
+        urlInput.select();
+    }, 0);
+}
   // ============================================================
 // STARTUP
 // ============================================================
